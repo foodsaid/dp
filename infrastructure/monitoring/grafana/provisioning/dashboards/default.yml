@@ -1,0 +1,11 @@
+apiVersion: 1
+providers:
+  - name: 'dp-monitoring'
+    orgId: 1
+    folder: 'DP 监控'
+    folderUid: 'dp-monitoring'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards

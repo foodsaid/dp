@@ -1,0 +1,410 @@
+{
+  "id": "2411cc19a8",
+  "name": "wf20 - OMS SAP订单同步",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 21,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "id": "o2000001-0001-0001-0001-000000000001",
+      "name": "Cron 21:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wms/oms/sync",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "o2000001-0001-0001-0001-000000000002",
+      "name": "手动同步触发",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -800,
+        500
+      ],
+      "webhookId": "wms-oms-sync"
+    },
+    {
+      "parameters": {
+        "jsCode": "// V1.0: 准备同步参数 — 获取上次同步时间\nconst companyCode = $env.DP_COMPANY_CODE;\nif (!companyCode) {\n  return { json: { _error: true, message: 'DP_COMPANY_CODE 未配置' } };\n}\n\n// 默认同步最近90天数据\nconst now = new Date();\nconst defaultFrom = new Date(now.getTime() - 90 * 86400000);\nconst dateFrom = defaultFrom.toISOString().split('T')[0];\n\nreturn { json: {\n  _error: false,\n  company_code: companyCode,\n  date_from: dateFrom,\n  doc_types: ['SO', 'PO', 'WO', 'TR']\n} };"
+      },
+      "id": "o2000001-0001-0001-0001-000000000003",
+      "name": "准备参数",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        400
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._error }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "o2000001-0001-0001-0001-000000000004",
+      "name": "Has Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: $json.message || 'Unknown error' }) }}",
+        "options": {}
+      },
+      "id": "o2000001-0001-0001-0001-000000000005",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  MAX(sap_update_date::text) AS last_sync_date,\n  COALESCE(\n    (SELECT sap_update_time::text FROM oms.orders\n     WHERE sap_update_date = (SELECT MAX(sap_update_date) FROM oms.orders WHERE parent_id IS NULL AND sap_doc_entry IS NOT NULL AND company_code = $1)\n       AND parent_id IS NULL AND sap_doc_entry IS NOT NULL AND company_code = $1\n     ORDER BY sap_update_time DESC LIMIT 1),\n    '00:00:00'\n  ) AS last_sync_time\nFROM oms.orders WHERE parent_id IS NULL AND sap_doc_entry IS NOT NULL AND company_code = $1",
+        "options": {
+          "queryReplacement": "={{ [$json.company_code] }}"
+        }
+      },
+      "id": "o2000001-0001-0001-0001-000000000006",
+      "name": "获取上次同步时间",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        200,
+        500
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// V3.1: 准备同步日期+时间 (空表=全量, 有数据=增量)\nconst params = $('准备参数').first().json;\nconst lastSync = $input.first().json.last_sync_date;\nconst lastSyncTime = $input.first().json.last_sync_time || '00:00:00';\n\n// 空表: 返回 full_sync 标志, 不带日期条件\nif (!lastSync) {\n  // 全量同步限制最近 90 天，避免数据量过大导致 OOM\n  const d = new Date();\n  d.setDate(d.getDate() - 90);\n  const limitDate = d.toISOString().slice(0, 10);\n  return { json: {\n    last_sync_date: limitDate,\n    last_sync_ts_int: 0,\n    full_sync: false,\n    company_code: params.company_code\n  } };\n}\n\n// 有数据: 增量同步\nif (!/^\\d{4}-\\d{2}-\\d{2}$/.test(lastSync)) {\n  return { json: { _error: true, message: `同步日期格式异常: ${lastSync}` } };\n}\n\n// SAP UpdateTS 是整数格式 (HHMMSS, 如 153045), 将 HH:MM:SS 转回整数\nconst timeParts = lastSyncTime.split(':');\nconst lastSyncTsInt = parseInt((timeParts[0] || '00') + (timeParts[1] || '00') + (timeParts[2] || '00'), 10) || 0;\n\nreturn { json: {\n  last_sync_date: lastSync,\n  last_sync_ts_int: lastSyncTsInt,\n  full_sync: false,\n  company_code: params.company_code\n} };"
+      },
+      "id": "o2000001-0001-0001-0001-000000000007",
+      "name": "构建SAP查询",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        500
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SET NOCOUNT ON;\nSELECT 'SO' AS doc_type,\n  T0.DocEntry AS sap_doc_entry, T0.DocNum AS sap_doc_num,\n  T0.CardCode AS business_partner, T0.CardName AS bp_name,\n  T0.DocDate AS doc_date, T0.DocDueDate AS due_date,\n  T0.DocStatus AS sap_status, T0.CANCELED AS sap_cancelled,\n  T0.DocTotal AS doc_total, T0.DocCur AS doc_currency,\n  CONVERT(varchar, T0.UpdateDate, 23) AS sap_update_date,\n  STUFF(STUFF(RIGHT('000000'+CAST(T0.UpdateTS AS VARCHAR),6),5,0,':'),3,0,':') AS sap_update_time,\n  T1.LineNum AS line_num, T1.ItemCode AS item_code,\n  T1.Dscription AS item_name, T1.Quantity AS quantity,\n  T1.OpenQty AS open_quantity, T1.WhsCode AS warehouse_code,\n  T1.UomCode AS uom,\n  CONVERT(varchar, T1.ShipDate, 23) AS ship_date,\n  NULL AS header_item_code, NULL AS header_item_name,\n  CAST(NULL AS DECIMAL) AS header_planned_qty, CAST(NULL AS DECIMAL) AS header_actual_qty,\n  NULL AS header_warehouse\nFROM ORDR T0 WITH (NOLOCK)\nINNER JOIN RDR1 T1 WITH (NOLOCK) ON T0.DocEntry = T1.DocEntry\nWHERE {{ $json.full_sync ? \"1=1\" : \"(T0.UpdateDate > '\" + $json.last_sync_date + \"' OR (T0.UpdateDate = '\" + $json.last_sync_date + \"' AND T0.UpdateTS > \" + $json.last_sync_ts_int + \"))\" }}\nUNION ALL\nSELECT 'PO' AS doc_type,\n  T0.DocEntry AS sap_doc_entry, T0.DocNum AS sap_doc_num,\n  T0.CardCode AS business_partner, T0.CardName AS bp_name,\n  T0.DocDate AS doc_date, T0.DocDueDate AS due_date,\n  T0.DocStatus AS sap_status, T0.CANCELED AS sap_cancelled,\n  T0.DocTotal AS doc_total, T0.DocCur AS doc_currency,\n  CONVERT(varchar, T0.UpdateDate, 23) AS sap_update_date,\n  STUFF(STUFF(RIGHT('000000'+CAST(T0.UpdateTS AS VARCHAR),6),5,0,':'),3,0,':') AS sap_update_time,\n  T1.LineNum AS line_num, T1.ItemCode AS item_code,\n  T1.Dscription AS item_name, T1.Quantity AS quantity,\n  T1.OpenQty AS open_quantity, T1.WhsCode AS warehouse_code,\n  T1.UomCode AS uom,\n  NULL AS ship_date,\n  NULL AS header_item_code, NULL AS header_item_name,\n  CAST(NULL AS DECIMAL) AS header_planned_qty, CAST(NULL AS DECIMAL) AS header_actual_qty,\n  NULL AS header_warehouse\nFROM OPOR T0 WITH (NOLOCK)\nINNER JOIN POR1 T1 WITH (NOLOCK) ON T0.DocEntry = T1.DocEntry\nWHERE {{ $json.full_sync ? \"1=1\" : \"(T0.UpdateDate > '\" + $json.last_sync_date + \"' OR (T0.UpdateDate = '\" + $json.last_sync_date + \"' AND T0.UpdateTS > \" + $json.last_sync_ts_int + \"))\" }}\nUNION ALL\nSELECT 'WO' AS doc_type,\n  T0.DocEntry AS sap_doc_entry, CAST(T0.DocNum AS VARCHAR(50)) AS sap_doc_num,\n  '' AS business_partner, '' AS bp_name,\n  T0.PostDate AS doc_date, T0.DueDate AS due_date,\n  T0.Status AS sap_status, CASE WHEN T0.Status = 'C' THEN 'Y' ELSE 'N' END AS sap_cancelled,\n  0 AS doc_total, '' AS doc_currency,\n  CONVERT(varchar, T0.UpdateDate, 23) AS sap_update_date,\n  STUFF(STUFF(RIGHT('000000'+CAST(T0.UpdateTS AS VARCHAR),6),5,0,':'),3,0,':') AS sap_update_time,\n  T1.LineNum AS line_num, T1.ItemCode AS item_code,\n  T1.ItemName AS item_name, T1.BaseQty AS quantity,\n  T1.IssuedQty AS open_quantity, T1.wareHouse AS warehouse_code,\n  T1.UomCode AS uom,\n  NULL AS ship_date,\n  T0.ItemCode AS header_item_code, T0.ProdName AS header_item_name,\n  T0.PlannedQty AS header_planned_qty, T0.CmpltQty AS header_actual_qty,\n  T0.Warehouse AS header_warehouse\nFROM OWOR T0 WITH (NOLOCK)\nINNER JOIN WOR1 T1 WITH (NOLOCK) ON T0.DocEntry = T1.DocEntry\nWHERE {{ $json.full_sync ? \"1=1\" : \"(T0.UpdateDate > '\" + $json.last_sync_date + \"' OR (T0.UpdateDate = '\" + $json.last_sync_date + \"' AND T0.UpdateTS > \" + $json.last_sync_ts_int + \"))\" }}\nAND T1.ItemType = 4",
+        "options": {}
+      },
+      "id": "o2000001-0001-0001-0001-000000000008",
+      "name": "SAP订单查询",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1,
+      "position": [
+        760,
+        500
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "microsoftSql": {
+          "id": "__CREDENTIAL_MSSQL_ID__",
+          "name": "__CREDENTIAL_MSSQL_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// V3.3: 转换SAP数据 → OMS UPSERT SQL (含 WO BOM 抬头字段)\n// 安全: esc() 转义字符串, num() 校验数值, 防 SQL 注入\nconst rows = $input.all().map(r => r.json);\nconst companyCode = $env.DP_COMPANY_CODE;\n\n// 过滤无效行 (alwaysOutputData=true 时 SAP 返回 0 行会产生空 item)\nconst validRows = rows.filter(r => r.doc_type && r.sap_doc_entry);\nif (!validRows || validRows.length === 0) {\n  return { json: { skip: true, count: 0, message: 'OMS: 无 SAP 数据需要同步' } };\n}\n\n// 按 doc_type + sap_doc_entry 分组为订单头\nconst orderMap = new Map();\nvalidRows.forEach(r => {\n  const key = `${r.doc_type}_${r.sap_doc_entry}`;\n  if (!orderMap.has(key)) {\n    orderMap.set(key, {\n      doc_type: r.doc_type,\n      sap_doc_entry: r.sap_doc_entry,\n      sap_doc_num: String(r.sap_doc_num),\n      business_partner: r.business_partner || '',\n      bp_name: r.bp_name || '',\n      doc_date: r.doc_date || null,\n      due_date: r.due_date || null,\n      sap_status: r.sap_status || 'O',\n      sap_cancelled: r.sap_cancelled || 'N',\n      doc_total: r.doc_total || 0,\n      doc_currency: r.doc_currency || '',\n      sap_update_date: r.sap_update_date || null,\n      sap_update_time: r.sap_update_time || '00:00:00',\n      header_item_code: r.header_item_code || null,\n      header_item_name: r.header_item_name || null,\n      header_planned_qty: r.header_planned_qty != null ? r.header_planned_qty : null,\n      header_actual_qty: r.header_actual_qty != null ? r.header_actual_qty : null,\n      header_warehouse: r.header_warehouse || null,\n      lines: []\n    });\n  }\n  orderMap.get(key).lines.push({\n    line_num: r.line_num,\n    item_code: r.item_code || '',\n    item_name: r.item_name || '',\n    quantity: r.quantity || 0,\n    open_quantity: r.open_quantity || 0,\n    warehouse_code: r.warehouse_code || '',\n    uom: r.uom || '',\n    ship_date: r.ship_date || null\n  });\n});\n\n// 安全: 字符串转义 + 数值校验\nconst esc = (v) => String(v || '').replace(/'/g, \"''\");\nconst num = (v) => { const n = Number(v); return isNaN(n) ? 0 : n; };\nconst escOrNull = (v) => v === null || v === undefined ? 'NULL' : `'${esc(v)}'`;\nconst numOrNull = (v) => v === null || v === undefined ? 'NULL' : num(v);\nconst orders = Array.from(orderMap.values());\n\n// 生成批量 SQL\nconst batches = [];\nconst batchSize = 100;\n\nfor (let i = 0; i < orders.length; i += batchSize) {\n  const batch = orders.slice(i, i + batchSize);\n  let sql = '';\n\n  batch.forEach(o => {\n    // 计算 sap_data_hash (MD5 of key fields)\n    const hashInput = `${o.sap_status}|${o.sap_cancelled}|${o.doc_total}|${o.business_partner}|${o.lines.length}|${o.header_item_code || ''}|${o.header_planned_qty != null ? o.header_planned_qty : ''}|${o.header_actual_qty != null ? o.header_actual_qty : ''}`;\n\n    // doc_number = sap_doc_num\n    sql += `\n      INSERT INTO oms.orders (company_code, doc_type, doc_number, sap_doc_entry, sap_doc_num,\n        business_partner, bp_name, doc_date, due_date, sap_status, sap_cancelled,\n        doc_total, doc_currency, sap_update_date, sap_update_time,\n        item_code, item_name, planned_qty, actual_qty, warehouse_code,\n        sap_data_hash, sap_last_seen_at, oms_status)\n      VALUES ('${esc(companyCode)}', '${esc(o.doc_type)}', '${esc(o.sap_doc_num)}', ${num(o.sap_doc_entry)}, '${esc(o.sap_doc_num)}',\n        '${esc(o.business_partner)}', '${esc(o.bp_name)}', ${escOrNull(o.doc_date)}, ${escOrNull(o.due_date)},\n        '${esc(o.sap_status)}', '${esc(o.sap_cancelled)}',\n        ${num(o.doc_total)}, '${esc(o.doc_currency)}', ${escOrNull(o.sap_update_date)}, ${escOrNull(o.sap_update_time)},\n        ${escOrNull(o.header_item_code)}, ${escOrNull(o.header_item_name)},\n        ${numOrNull(o.header_planned_qty)}, ${numOrNull(o.header_actual_qty)},\n        ${escOrNull(o.header_warehouse)},\n        MD5('${esc(hashInput)}'), NOW(), 'pending')\n      ON CONFLICT (company_code, doc_type, sap_doc_entry) WHERE parent_id IS NULL AND sap_doc_entry IS NOT NULL\n      DO UPDATE SET\n        doc_number = EXCLUDED.doc_number,\n        sap_doc_num = EXCLUDED.sap_doc_num,\n        business_partner = EXCLUDED.business_partner, bp_name = EXCLUDED.bp_name,\n        doc_date = EXCLUDED.doc_date, due_date = EXCLUDED.due_date,\n        sap_status = EXCLUDED.sap_status, sap_cancelled = EXCLUDED.sap_cancelled,\n        doc_total = EXCLUDED.doc_total, doc_currency = EXCLUDED.doc_currency,\n        sap_update_date = EXCLUDED.sap_update_date, sap_update_time = EXCLUDED.sap_update_time,\n        item_code = EXCLUDED.item_code, item_name = EXCLUDED.item_name,\n        planned_qty = EXCLUDED.planned_qty, actual_qty = EXCLUDED.actual_qty,\n        warehouse_code = COALESCE(EXCLUDED.warehouse_code, oms.orders.warehouse_code),\n        sap_data_hash = EXCLUDED.sap_data_hash, sap_last_seen_at = NOW(),\n        oms_status = CASE\n          WHEN oms.orders.oms_status IN ('split', 'executing') THEN oms.orders.oms_status\n          WHEN EXCLUDED.sap_cancelled = 'Y' THEN 'cancelled'\n          WHEN EXCLUDED.sap_status IN ('C', 'L') THEN 'completed'\n          ELSE oms.orders.oms_status\n        END,\n        execution_state = CASE\n          WHEN oms.orders.oms_status IN ('split') OR oms.orders.execution_state = 'executing' THEN oms.orders.execution_state\n          WHEN EXCLUDED.sap_cancelled = 'Y' THEN 'done'\n          WHEN EXCLUDED.sap_status IN ('C', 'L') THEN 'done'\n          ELSE oms.orders.execution_state\n        END\n;\n    `;\n\n    // 行项目 UPSERT\n    o.lines.forEach(ln => {\n      sql += `\n        INSERT INTO oms.order_lines (order_id, line_num, item_code, item_name,\n          quantity, open_quantity, warehouse_code, uom, ship_date)\n        SELECT id, ${num(ln.line_num)}, '${esc(ln.item_code)}', '${esc(ln.item_name)}',\n          ${num(ln.quantity)}, ${num(ln.open_quantity)}, '${esc(ln.warehouse_code)}', '${esc(ln.uom)}',\n          ${escOrNull(ln.ship_date)}\n        FROM oms.orders\n        WHERE company_code = '${esc(companyCode)}' AND doc_type = '${esc(o.doc_type)}'\n          AND sap_doc_entry = ${num(o.sap_doc_entry)} AND parent_id IS NULL\n        ON CONFLICT (order_id, line_num)\n        DO UPDATE SET\n          item_code = EXCLUDED.item_code, item_name = EXCLUDED.item_name,\n          quantity = EXCLUDED.quantity, open_quantity = EXCLUDED.open_quantity,\n          warehouse_code = EXCLUDED.warehouse_code, uom = EXCLUDED.uom,\n          ship_date = EXCLUDED.ship_date;\n      `;\n    });\n  });\n\n  batches.push({ json: { sql, batch_num: Math.floor(i/batchSize) + 1, order_count: batch.length } });\n}\n\nreturn batches.length > 0 ? batches : [{ json: { skip: true, count: 0 } }];"
+      },
+      "id": "o2000001-0001-0001-0001-000000000009",
+      "name": "生成UPSERT SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        500
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.skip }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "o2000001-0001-0001-0001-000000000010",
+      "name": "Skip?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "id": "o2000001-0001-0001-0001-000000000011",
+      "name": "批量写入OMS",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1600,
+        600
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// V1.1: 汇总同步结果 — 从生成节点获取 order_count (修复 PG 节点丢失字段)\nconst allItems = $('生成UPSERT SQL').all();\nlet totalOrders = 0;\n\nallItems.forEach(item => {\n  totalOrders += (item.json.order_count || 0);\n});\n\nreturn { json: {\n  success: true,\n  count: totalOrders,\n  message: 'OMS 订单同步完成: ' + totalOrders + ' 个订单已处理'\n} };"
+      },
+      "id": "o2000001-0001-0001-0001-000000000012",
+      "name": "汇总结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        600
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "o2000001-0001-0001-0001-000000000013",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2160,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// V1.0: 跳过同步 — 无新数据\nreturn { json: { success: true, count: 0, message: 'OMS: 无新增/变更订单' } };"
+      },
+      "id": "o2000001-0001-0001-0001-000000000014",
+      "name": "Skip Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        400
+      ],
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "手动同步触发": {
+      "main": [
+        [
+          {
+            "node": "准备参数",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "准备参数": {
+      "main": [
+        [
+          {
+            "node": "Has Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Error?": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "获取上次同步时间",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "获取上次同步时间": {
+      "main": [
+        [
+          {
+            "node": "构建SAP查询",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "构建SAP查询": {
+      "main": [
+        [
+          {
+            "node": "SAP订单查询",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SAP订单查询": {
+      "main": [
+        [
+          {
+            "node": "生成UPSERT SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "生成UPSERT SQL": {
+      "main": [
+        [
+          {
+            "node": "Skip?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip?": {
+      "main": [
+        [
+          {
+            "node": "Skip Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "批量写入OMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "批量写入OMS": {
+      "main": [
+        [
+          {
+            "node": "汇总结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "汇总结果": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron 21:30": {
+      "main": [
+        [
+          {
+            "node": "准备参数",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Cron 21:30": {
+      "recurrenceRules": []
+    }
+  }
+}

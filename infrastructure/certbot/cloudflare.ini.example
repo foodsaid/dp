@@ -1,0 +1,16 @@
+# =============================================================================
+# DP — Cloudflare API Token (certbot DNS-01 验证)
+# =============================================================================
+# 生成步骤:
+#   1. Cloudflare Dashboard > My Profile > API Tokens > Create Token
+#   2. 模板: "Edit zone DNS"
+#   3. Permissions: Zone > DNS > Edit (仅此一项)
+#   4. Zone Resources: Include > Specific zone > example.com
+#   5. 不要选 Account 级权限, 不要加其他权限
+#
+# 使用:
+#   cp cloudflare.ini.example cloudflare.ini
+#   vim cloudflare.ini   # 填入 token
+#   chmod 600 cloudflare.ini   # 必须! certbot 拒绝 world-readable
+# =============================================================================
+dns_cloudflare_api_token = YOUR_TOKEN_HERE

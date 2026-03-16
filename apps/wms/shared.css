@@ -1,0 +1,1258 @@
+/**
+ * WMS - 公共样式
+ * 公共样式, 支持响应式+移动端
+ */
+
+/* V17.1: 认证防闪屏 — 页面默认隐藏，checkAuth通过后由JS移除此类 */
+body:not(.authed) {
+    opacity: 0 !important;
+    pointer-events: none;
+}
+
+/* ============================================================================
+   CSS Variables & Theme
+   ============================================================================ */
+
+:root {
+    --primary-color: #2563eb;
+    --primary-dark: #1e40af;
+    --primary-light: #3b82f6;
+    --success-color: #10b981;
+    --error-color: #ef4444;
+    --warning-color: #f59e0b;
+    --info-color: #3b82f6;
+    --text-primary: #1f2937;
+    --text-secondary: #6b7280;
+    --bg-primary: #ffffff;
+    --bg-secondary: #f9fafb;
+    --bg-tertiary: #f3f4f6;
+    --border-color: #e5e7eb;
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    --spacing-xs: 0.5rem;
+    --spacing-sm: 0.75rem;
+    --spacing-md: 1rem;
+    --spacing-lg: 1.5rem;
+    --spacing-xl: 2rem;
+    --radius-sm: 0.375rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 0.75rem;
+    --font-family: 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* ============================================================================
+   Base
+   ============================================================================ */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: var(--font-family);
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    background-color: var(--bg-secondary);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ============================================================================
+   Layout
+   ============================================================================ */
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: var(--spacing-md);
+}
+
+/* PC 宽屏: 放宽容器，充分利用屏幕 */
+@media (min-width: 1024px) {
+    .container {
+        max-width: 1100px;
+    }
+}
+@media (min-width: 1440px) {
+    .container {
+        max-width: 1280px;
+    }
+}
+
+.header {
+    background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+    color: white;
+    padding: var(--spacing-md) var(--spacing-lg);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--spacing-md);
+    box-shadow: var(--shadow-md);
+}
+
+.header h1 {
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin: 0;
+    line-height: 1.3;
+    display: inline;
+}
+
+.header p {
+    opacity: 0.8;
+    font-size: 0.75rem;
+    margin: 0;
+    display: inline;
+    margin-left: 8px;
+}
+
+.header-nav {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: 0;
+}
+
+.header-nav > div {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.header-nav .back-link {
+    color: rgba(255,255,255,0.8);
+    text-decoration: none;
+    font-size: 1.25rem;
+    flex-shrink: 0;
+}
+
+.header-nav .back-link:hover {
+    color: white;
+}
+
+.header-user {
+    font-size: 0.8rem;
+    color: rgba(255,255,255,0.75);
+    margin-left: 6px;
+}
+
+.btn-logout {
+    padding: 6px 14px;
+    background: #ef4444;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+.btn-logout:hover { background: #dc2626; }
+
+/* ============================================================================
+   Cards
+   ============================================================================ */
+
+.card {
+    background: var(--bg-primary);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border-color);
+}
+
+.card-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: var(--spacing-md);
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.card-title::before {
+    content: '';
+    width: 4px;
+    height: 1.125rem;
+    background: var(--primary-color);
+    border-radius: 2px;
+}
+
+/* ============================================================================
+   Info Grid
+   ============================================================================ */
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.info-item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.info-label {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.info-value {
+    font-size: 1.125rem;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.info-value.highlight {
+    color: var(--primary-color);
+    font-size: 1.5rem;
+}
+
+/* ============================================================================
+   Progress Bar
+   ============================================================================ */
+
+.progress-container {
+    margin-top: var(--spacing-lg);
+}
+
+.progress-bar-wrapper {
+    width: 100%;
+    height: 24px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    position: relative;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color) 0%, var(--primary-light) 100%);
+    transition: width 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: var(--spacing-sm);
+    min-width: 0;
+}
+
+.progress-bar.warning {
+    background: linear-gradient(90deg, var(--warning-color) 0%, #fbbf24 100%);
+}
+
+.progress-bar.complete {
+    background: linear-gradient(90deg, var(--success-color) 0%, #34d399 100%);
+}
+
+.progress-bar.over {
+    background: linear-gradient(90deg, var(--error-color) 0%, #f87171 100%);
+}
+
+.progress-text {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: white;
+}
+
+/* ============================================================================
+   Forms
+   ============================================================================ */
+
+.form-group {
+    margin-bottom: var(--spacing-md);
+}
+
+.form-label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-xs);
+}
+
+.form-input,
+.form-select,
+.form-textarea {
+    width: 100%;
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: 1rem;
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius-md);
+    transition: all 0.2s;
+    font-family: var(--font-family);
+    background: var(--bg-primary);
+}
+
+.form-input:focus,
+.form-select:focus,
+.form-textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.form-input.scan-input {
+    font-size: 1.25rem;
+    font-weight: bold;
+    text-align: center;
+    background: #fff9e6;
+    border-color: var(--warning-color);
+}
+
+.form-input.scan-input:focus {
+    border-color: var(--primary-color);
+    background: #f0f4ff;
+}
+
+.form-input.number-input {
+    font-size: 1.25rem;
+    text-align: center;
+}
+
+.form-textarea {
+    resize: vertical;
+    min-height: 60px;
+}
+
+.form-hint {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+/* ============================================================================
+   Buttons
+   ============================================================================ */
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-sm) var(--spacing-lg);
+    font-size: 1rem;
+    font-weight: 500;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: var(--font-family);
+}
+
+.btn-primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--primary-dark);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
+.btn-success {
+    background: var(--success-color);
+    color: white;
+}
+
+.btn-success:hover {
+    background: #059669;
+    transform: translateY(-1px);
+}
+
+.btn-danger {
+    background: var(--error-color);
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #dc2626;
+    transform: translateY(-1px);
+}
+
+.btn-outline {
+    background: transparent;
+    color: var(--primary-color);
+    border: 2px solid var(--primary-color);
+}
+
+.btn-outline:hover,
+.btn-outline:active {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-block {
+    width: 100%;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+/* 同步按钮"无需同步"视觉禁用 (不用 HTML disabled，保证长按事件可触发) */
+button[data-sync-disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: none;
+    -webkit-touch-callout: none;
+}
+
+.force-enabled {
+    background-color: #28a745 !important;
+    color: white !important;
+    opacity: 1 !important;
+}
+
+.btn-group {
+    display: flex;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+}
+
+/* ============================================================================
+   Table
+   ============================================================================ */
+
+.table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.table thead {
+    background: var(--bg-tertiary);
+}
+
+.table th {
+    padding: var(--spacing-sm) var(--spacing-md);
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-bottom: 2px solid var(--border-color);
+    white-space: nowrap;
+}
+
+.table td {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+.table tbody tr:hover {
+    background: var(--bg-secondary);
+}
+
+.table .no-data {
+    text-align: center;
+    padding: var(--spacing-xl);
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+/* ============================================================================
+   Status Badges
+   ============================================================================ */
+
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.badge-pending { background: #fef9c3; color: #854d0e; }
+.badge-draft { background: #e5e7eb; color: #374151; }
+.badge-in_progress { background: #dbeafe; color: #1e40af; }
+.badge-completed { background: #d1fae5; color: #065f46; }
+.badge-cancelled { background: #fee2e2; color: #991b1b; }
+.badge-exported { background: #fef3c7; color: #92400e; }
+.badge-split { background: #fce7f3; color: #9d174d; }
+.badge-idle { background: #e5e7eb; color: #374151; }
+.badge-executing { background: #dbeafe; color: #1e40af; }
+.badge-done { background: #d1fae5; color: #065f46; }
+
+/* ============================================================================
+   Toast Messages
+   ============================================================================ */
+
+.message-toast {
+    position: fixed;
+    top: var(--spacing-lg);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: var(--spacing-md) var(--spacing-lg);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    font-weight: 500;
+    z-index: 1000;
+    animation: slideDown 0.3s ease;
+    max-width: 90%;
+}
+
+.message-toast.success { background: var(--success-color); color: white; }
+.message-toast.error { background: var(--error-color); color: white; }
+.message-toast.warning { background: var(--warning-color); color: white; }
+.message-toast.info { background: var(--info-color); color: white; }
+
+.message-toast.fade-out {
+    animation: fadeOut 0.3s ease;
+}
+
+/* ============================================================================
+   Loading Spinner
+   ============================================================================ */
+
+.loader {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.9);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+
+.spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid var(--bg-tertiary);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+/* ============================================================================
+   Scan Indicator (beep flash)
+   ============================================================================ */
+
+.beep-indicator {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0);
+    width: 150px;
+    height: 150px;
+    background: rgba(16, 185, 129, 0.9);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 48px;
+    color: white;
+    pointer-events: none;
+    z-index: 999;
+}
+
+.beep-indicator.show {
+    animation: beepPulse 0.5s ease;
+}
+
+/* ============================================================================
+   Portal Tiles (index.html)
+   ============================================================================ */
+
+.tile-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+}
+
+.tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-lg) var(--spacing-md);
+    background: var(--bg-primary);
+    border-radius: var(--radius-lg);
+    border: 2px solid var(--border-color);
+    text-decoration: none;
+    color: var(--text-primary);
+    transition: all 0.2s;
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+}
+
+.tile:hover {
+    border-color: var(--primary-color);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+}
+
+.tile-icon {
+    font-size: 2rem;
+    margin-bottom: var(--spacing-xs);
+}
+
+.tile-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-align: center;
+}
+
+.tile-sub {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+/* ============================================================================
+   Animations
+   ============================================================================ */
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes slideDown {
+    from { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes fadeOut {
+    to { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+}
+
+@keyframes beepPulse {
+    0% { transform: translate(-50%, -50%) scale(0); opacity: 0; }
+    50% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(0); opacity: 0; }
+}
+
+/* ============================================================================
+   Responsive
+   ============================================================================ */
+
+@media (max-width: 640px) {
+    .container {
+        padding: var(--spacing-sm);
+    }
+
+    .header {
+        padding: var(--spacing-md);
+    }
+
+    .header h1 {
+        font-size: 1.25rem;
+    }
+
+    .card {
+        padding: var(--spacing-md);
+    }
+
+    .info-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .tile-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: var(--spacing-sm);
+    }
+
+    .tile {
+        padding: var(--spacing-md) var(--spacing-xs);
+    }
+
+    .tile-icon {
+        font-size: 1.5rem;
+    }
+
+    .tile-label {
+        font-size: 0.75rem;
+    }
+
+    .table {
+        font-size: 0.75rem;
+    }
+
+    .table th,
+    .table td {
+        padding: var(--spacing-xs) var(--spacing-sm);
+    }
+
+    .btn-group {
+        flex-direction: column;
+    }
+
+    .btn-group .btn {
+        width: 100%;
+    }
+}
+
+/* ============================================================================
+   Utility Classes
+   ============================================================================ */
+
+.text-center { text-align: center; }
+.text-right { text-align: right; }
+.text-success { color: var(--success-color); }
+.text-error { color: var(--error-color); }
+.text-warning { color: var(--warning-color); }
+.text-muted { color: var(--text-secondary); }
+.mt-sm { margin-top: var(--spacing-sm); }
+.mt-md { margin-top: var(--spacing-md); }
+.mt-lg { margin-top: var(--spacing-lg); }
+.mb-md { margin-bottom: var(--spacing-md); }
+.mb-lg { margin-bottom: var(--spacing-lg); }
+.hidden { display: none !important; }
+.no-print { }
+
+/* ============================================================================
+   One-Click Action Button
+   ============================================================================ */
+
+.btn-oneclick {
+    background: linear-gradient(135deg, var(--success-color) 0%, #34d399 100%);
+    color: white;
+    font-weight: 600;
+    font-size: 1.05rem;
+    padding: var(--spacing-md) var(--spacing-lg);
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    width: 100%;
+    margin-top: var(--spacing-sm);
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s;
+}
+
+.btn-oneclick:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+    filter: brightness(1.05);
+}
+
+.btn-oneclick:active {
+    transform: translateY(0);
+}
+
+
+/* ============================================================================
+   Document Type Badges
+   ============================================================================ */
+
+.doc-badge { display: inline-block; width: 40px; height: 40px; vertical-align: middle; }
+.doc-badge-sm { display: inline-block; width: 28px; height: 28px; vertical-align: middle; }
+.doc-badge-lg { display: inline-block; width: 36px; height: 36px; vertical-align: middle; margin-right: 6px; }
+
+/* ============================================================================
+   Version Footer
+   ============================================================================ */
+
+.version-footer {
+    text-align: center;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    padding: var(--spacing-md) 0;
+    opacity: 0.6;
+}
+
+/* ============================================================================
+   Line Barcode Column (for print & screen)
+   ============================================================================ */
+
+.line-barcode-col {
+    text-align: center;
+}
+
+.line-barcode-col img {
+    width: 50px;
+    height: 50px;
+}
+
+.action-col {
+    /* visible on screen, hidden in print via print.css */
+}
+
+/* ============================================================================
+   Status: Completed/Closed Cards & Rows
+   ============================================================================ */
+
+/* 已完成/已关闭单据 - 整体卡片变灰 */
+.card.status-closed {
+    opacity: 0.55;
+    background: #f5f5f5;
+    border-left-color: #ccc;
+    pointer-events: none;
+}
+
+/* 已关闭单据内允许扫码框仍可操作 */
+.card.status-closed .scan-input,
+.card.status-closed .back-link {
+    pointer-events: auto;
+    opacity: 1;
+}
+
+/* 行明细已完成 - 灰色 */
+.table tr.line-done {
+    opacity: 0.45;
+    background: #f9f9f9;
+}
+.table tr.line-done td {
+    color: #bbb;
+}
+.table tr.line-done .badge {
+    opacity: 0.7;
+}
+
+/* ============================================================================
+   Table Column Widths & Mobile Optimization
+   ============================================================================ */
+
+.table .col-line { width: 30px; text-align: center; }
+.table .col-item { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+.table .col-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+/* 悬停时显示完整内容 */
+.table td.col-item:hover,
+.table td.col-name:hover {
+    overflow: visible;
+    position: relative;
+    z-index: 10;
+    background: #fff;
+    box-shadow: var(--shadow-md);
+    white-space: normal;
+    word-break: break-all;
+    min-width: 200px;
+}
+.table .col-qty { width: 60px; text-align: right; }
+.table .col-whs { width: 55px; }
+
+@media (max-width: 640px) {
+    .table .col-name,
+    .table .col-barcode {
+        display: none;
+    }
+    .table .col-item {
+        max-width: 70px;
+    }
+}
+
+/* ============================================================================
+   Batch Input Section (for receipt forms)
+   ============================================================================ */
+
+.batch-input-section {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.batch-input-section .form-label {
+    color: #166534;
+}
+
+.batch-input-section .form-hint {
+    color: #15803d;
+    font-size: 0.75rem;
+}
+
+/* ============================================================================
+   Language Switcher (i18n)
+   ============================================================================ */
+
+.lang-switcher {
+    display: flex;
+    gap: 2px;
+}
+
+.lang-btn {
+    background: var(--bg-tertiary, #f3f4f6);
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 0.65rem;
+    cursor: pointer;
+    color: var(--text-secondary, #6b7280);
+    line-height: 1.3;
+    white-space: nowrap;
+    transition: all 0.2s;
+}
+
+.lang-btn:hover {
+    background: var(--primary-color, #2563eb);
+    color: #fff;
+    border-color: var(--primary-color, #2563eb);
+}
+
+.lang-btn.active {
+    background: var(--primary-color, #2563eb);
+    color: #fff;
+    border-color: var(--primary-dark, #1e40af);
+    font-weight: 600;
+}
+
+/* header 深色背景内的语言切换器 — 白色透明风格 */
+.header .lang-btn,
+.header-nav .lang-btn {
+    background: rgba(255,255,255,0.15);
+    border-color: rgba(255,255,255,0.4);
+    color: #fff;
+}
+.header .lang-btn:hover,
+.header-nav .lang-btn:hover {
+    background: rgba(255,255,255,0.35);
+}
+.header .lang-btn.active,
+.header-nav .lang-btn.active {
+    background: rgba(255,255,255,0.5);
+    border-color: #fff;
+    color: #fff;
+}
+
+/* ============================================================================
+   库位自动补全 (V18.2)
+   ============================================================================ */
+
+/* 库位最近历史标签 (V18.4 轻量版) */
+.bin-recent-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    margin-top: 4px;
+}
+.bin-recent-label {
+    color: #f59e0b;
+    font-size: 0.75rem;
+    flex-shrink: 0;
+}
+.bin-recent-chip {
+    padding: 2px 8px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 12px;
+    font-size: 0.78rem;
+    color: #92400e;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.bin-recent-chip:hover {
+    background: #fef3c7;
+}
+/* V19.6: 手机端隐藏库位历史标签 (快速扫码模式) */
+@media (max-width: 768px) {
+    .bin-recent-tags { display: none !important; }
+}
+
+/* V18.8: 小屏幕 header 精简 — 单行紧凑布局 */
+@media (max-width: 600px) {
+    .lang-switcher {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2px;
+    }
+    .lang-btn {
+        padding: 3px 5px;
+        font-size: 0.65rem;
+        text-align: center;
+        white-space: nowrap;
+    }
+    /* header 统一: 紧凑单行，固定高度感 */
+    .header {
+        padding: 10px 12px;
+    }
+    .header-nav {
+        gap: 8px;
+        align-items: center;
+    }
+    .header-nav > div {
+        flex: 1;
+        min-width: 0;
+    }
+    /* h1 用 data-short-title 替代长标题 */
+    .header-nav h1[data-short-title] {
+        font-size: 0;
+        line-height: 0;
+        overflow: hidden;
+    }
+    .header-nav h1[data-short-title]::after {
+        content: attr(data-short-title);
+        font-size: 1.1rem;
+        line-height: 1.3;
+        font-weight: 700;
+    }
+    /* 隐藏副标题和用户名 */
+    .header-nav p,
+    .header-user {
+        display: none;
+    }
+    /* 图标缩小 */
+    .doc-badge-lg {
+        width: 28px;
+        height: 28px;
+        font-size: 1rem;
+    }
+}
+
+/* ============================================================================
+   PDA Small Screen (4.4 inch ~ 320-420px)
+   针对手持PDA终端优化: 精简显示, 高效操作
+   ============================================================================ */
+
+@media (max-width: 420px) {
+    /* --- 整体布局: 最小间距 --- */
+    .container {
+        padding: 4px;
+    }
+
+    /* --- 表头: 极简 --- */
+    .header {
+        padding: 8px 10px;
+        border-radius: 6px;
+        margin-bottom: 6px;
+    }
+    .header h1 {
+        font-size: 1rem;
+    }
+    .header p {
+        display: none; /* 隐藏副标题 */
+    }
+    .btn-logout {
+        padding: 4px 8px;
+        font-size: 0.75rem;
+    }
+
+    /* --- 卡片: 紧凑 --- */
+    .card {
+        padding: 8px 10px;
+        margin-bottom: 8px;
+        border-radius: 6px;
+    }
+    .card-title {
+        font-size: 0.9rem;
+        margin-bottom: 6px;
+    }
+
+    /* --- 门户磁贴: 只显示图标+代码 --- */
+    .tile-grid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        margin-bottom: 8px;
+    }
+    .tile {
+        padding: 8px 4px;
+        border-radius: 6px;
+        border-width: 1px;
+    }
+    .tile-icon {
+        font-size: 1.3rem;
+        margin-bottom: 2px;
+    }
+    .tile-label {
+        display: none; /* 隐藏中文标签, 仅留图标+代码 */
+    }
+    .tile-sub {
+        font-size: 0.7rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    /* --- 工具磁贴: 3列保持但紧凑 --- */
+    .tile-grid[style*="repeat(3"] {
+        gap: 6px;
+    }
+
+    /* --- 表单: 标签隐藏, placeholder代替 --- */
+    .form-label {
+        display: none;
+    }
+    .form-group {
+        margin-bottom: 6px;
+    }
+    .form-input,
+    .form-select,
+    .form-textarea {
+        padding: 8px 10px;
+        font-size: 0.9rem;
+        border-radius: 6px;
+    }
+    .form-input.scan-input {
+        font-size: 1rem;
+        padding: 10px;
+    }
+    .form-input.number-input {
+        font-size: 1.1rem;
+        padding: 10px;
+    }
+    .form-hint {
+        display: none; /* 隐藏提示文字 */
+    }
+    .form-textarea {
+        min-height: 40px;
+    }
+
+    /* --- 批次输入区紧凑 --- */
+    .batch-input-section {
+        padding: 6px 8px;
+        margin-bottom: 6px;
+    }
+    .batch-input-section .form-label {
+        display: none;
+    }
+
+    /* --- 信息网格: 2列紧凑 --- */
+    .info-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 4px 8px;
+    }
+    .info-item {
+        gap: 1px;
+    }
+    .info-label {
+        font-size: 0.7rem;
+    }
+    .info-value {
+        font-size: 0.85rem;
+    }
+    .info-value.highlight {
+        font-size: 1.1rem;
+    }
+
+    /* --- 进度条紧凑 --- */
+    .progress-container {
+        margin-top: 6px;
+    }
+    .progress-bar-wrapper {
+        height: 18px;
+    }
+
+    /* --- 按钮: 紧凑 --- */
+    .btn {
+        padding: 8px 12px;
+        font-size: 0.85rem;
+    }
+    .btn-oneclick {
+        padding: 10px;
+        font-size: 0.95rem;
+    }
+    .btn-group {
+        gap: 4px;
+    }
+
+    /* --- 表格: 更紧凑 --- */
+    .table {
+        font-size: 0.7rem;
+    }
+    .table th,
+    .table td {
+        padding: 4px 6px;
+    }
+    .table .col-whs {
+        display: none; /* 隐藏仓库列 */
+    }
+
+    /* --- 扫码输入框提示 --- */
+    .portal-scan-card .form-hint {
+        display: none;
+    }
+
+    /* --- 语言切换器: 继承 600px 规则, PDA 额外缩小 --- */
+    .lang-btn {
+        padding: 2px 4px;
+        font-size: 0.58rem;
+    }
+
+    /* --- 版本底部隐藏 --- */
+    .version-footer {
+        display: none;
+    }
+
+    /* --- 返回链接紧凑 --- */
+    .header-nav .back-link {
+        font-size: 1rem;
+    }
+
+    /* --- 文档徽章紧凑 --- */
+    .doc-badge-lg {
+        width: 28px;
+        height: 28px;
+        margin-right: 4px;
+    }
+}
+
+/* ============================================================================
+   Keyboard Toggle (移动端软键盘切换按钮)
+   ============================================================================ */
+
+.kb-toggle-btn {
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 4px 6px;
+    line-height: 1;
+    z-index: 2;
+    opacity: 0.5;
+    color: var(--text-secondary, #6b7280);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.kb-toggle-btn:active { opacity: 1; }
+
+.kb-toggle-btn.kb-active {
+    opacity: 1;
+    color: var(--primary-color, #2563eb);
+}
+
+/* 移动触屏: CSS 预留左侧空间，避免 JS 加载时布局跳动 */
+@media (max-width: 768px) and (pointer: coarse) {
+    .scan-input { padding-left: 40px; }
+}
+
+.kb-enabled-input { padding-left: 40px !important; }
+
+@media (min-width: 769px) {
+    .kb-toggle-btn { display: none; }
+    .kb-enabled-input { padding-left: 12px !important; }
+}
+
+/* ============================================================================
+   PC 宽屏优化 (≥1024px): 信息网格/磁贴/表格充分利用宽度
+   ============================================================================ */
+
+@media (min-width: 1024px) {
+    .info-grid {
+        grid-template-columns: repeat(4, 1fr);
+    }
+    .tile-grid {
+        grid-template-columns: repeat(4, 1fr);
+    }
+    .table {
+        font-size: 0.9rem;
+    }
+    .table .col-item {
+        max-width: 180px;
+    }
+    .table .col-name {
+        max-width: 220px;
+    }
+}

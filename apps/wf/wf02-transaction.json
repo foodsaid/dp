@@ -1,0 +1,429 @@
+{
+  "id": "1a7ac9dac2",
+  "name": "wf02 - 事务提交",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wms/transaction",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "a0000001-0001-0001-0001-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -600,
+        300
+      ],
+      "webhookId": "wms-transaction"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body;\nconst required = ['doc_type', 'doc_number', 'item_code', 'quantity', 'performed_by', 'action'];\nconst missing = required.filter(f => body[f] === undefined || body[f] === null || body[f] === '');\nif (missing.length > 0) {\n  return { json: { _error: true, success: false, message: '缺少字段: ' + missing.join(', ') } };\n}\nconst qty = parseFloat(body.quantity);\nif (isNaN(qty)) {\n  return { json: { _error: true, success: false, message: '数量无效' } };\n}\nif (body.action !== 'count' && qty <= 0) {\n  return { json: { _error: true, success: false, message: '数量必须大于0' } };\n}\nreturn { json: {\n  _error: false,\n  doc_type: body.doc_type,\n  doc_number: String(body.doc_number),\n  sap_doc_num: String(body.sap_doc_num || body.doc_number),\n  sap_doc_entry: body.sap_doc_entry || null,\n  item_code: String(body.item_code),\n  item_name: String(body.item_name || ''),\n  quantity: qty,\n  warehouse_code: String(body.warehouse_code || ''),\n  bin_location: body.bin_location || null,\n  from_warehouse: body.from_warehouse || null,\n  from_bin: body.from_bin || null,\n  line_num: body.line_num !== undefined ? parseInt(body.line_num) : -1,\n  performed_by: String(body.performed_by),\n  action: String(body.action),\n  remarks: String(body.remarks || ''),\n  planned_qty: parseFloat(body.planned_qty) || 0,\n  uom: String(body.uom || ''),\n  batch_number: body.batch_number ? String(body.batch_number) : null,\n  production_date: body.production_date ? String(body.production_date) : null,\n  transaction_time: body.transaction_time ? String(body.transaction_time) : null\n}};"
+      },
+      "id": "a0000001-0001-0001-0001-000000000002",
+      "name": "Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._error }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "a0000001-0001-0001-0001-000000000003",
+      "name": "Has Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: $json.message }) }}",
+        "options": {}
+      },
+      "id": "a0000001-0001-0001-0001-000000000004",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        60,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO wms.wms_documents\n  (company_code, doc_type, doc_number, sap_doc_num, sap_doc_entry, status, wms_status,\n   warehouse_code, created_by, doc_date)\nVALUES\n  ($1, $2, $3, $4, $5, 'in_progress', 'in_progress',\n   $6, $7, CURRENT_DATE)\nON CONFLICT (company_code, doc_type, doc_number) DO UPDATE SET\n  wms_status = CASE WHEN wms.wms_documents.wms_status IN ('pending', 'draft', 'completed') THEN 'in_progress' ELSE wms.wms_documents.wms_status END,\n  status = CASE WHEN wms.wms_documents.status IN ('pending', 'draft', 'completed') THEN 'in_progress' ELSE wms.wms_documents.status END",
+        "options": {
+          "queryReplacement": "={{ [$env.DP_COMPANY_CODE, $json.doc_type, $json.doc_number, $json.sap_doc_num, $json.sap_doc_entry || null, $json.warehouse_code, $json.performed_by] }}"
+        }
+      },
+      "id": "a0000001-0001-0001-0001-000000000005",
+      "name": "Ensure Doc",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        60,
+        440
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id FROM wms.wms_documents\nWHERE company_code = $1\n  AND doc_type = $2\n  AND doc_number = $3",
+        "options": {
+          "queryReplacement": "={{ [$env.DP_COMPANY_CODE, $(\"Validate\").item.json.doc_type, $(\"Validate\").item.json.doc_number] }}"
+        }
+      },
+      "id": "a0000001-0001-0001-0001-000000000006",
+      "name": "Get Doc ID",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        280,
+        440
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const docId = $input.item.json.id;\nconst prev = $('Validate').first().json;\nreturn { json: { ...prev, document_id: docId } };"
+      },
+      "id": "a0000001-0001-0001-0001-000000000007",
+      "name": "Merge Doc ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO wms.wms_document_lines\n  (document_id, line_num, item_code, item_name, uom, planned_qty,\n   warehouse_code, bin_location, status, wms_status)\nSELECT\n  $1,\n  CASE WHEN $2 >= 0 THEN $2\n       ELSE COALESCE((SELECT MAX(dl2.line_num) FROM wms.wms_document_lines dl2 WHERE dl2.document_id = $1), -1) + 1\n  END,\n  $3, $4,\n  $5, $6,\n  $7,\n  $8,\n  'pending', 'pending'\n\nWHERE NOT EXISTS (\n  SELECT 1 FROM wms.wms_document_lines\n  WHERE document_id = $1\n    AND (\n      ($2 >= 0 AND line_num = $2)\n      OR\n      ($2 < 0 AND item_code = $3)\n    )\n)",
+        "options": {
+          "queryReplacement": "={{ [$json.document_id, $json.line_num, $json.item_code, $json.item_name, $json.uom, $json.planned_qty, $json.warehouse_code, $json.bin_location || null] }}"
+        }
+      },
+      "id": "a0000001-0001-0001-0001-000000000008",
+      "name": "Ensure Line",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        440
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, line_num FROM wms.wms_document_lines\nWHERE document_id = $1\n  AND (\n    ($2 >= 0 AND line_num = $2)\n    OR\n    ($2 < 0 AND item_code = $3)\n  )\nORDER BY id DESC LIMIT 1",
+        "options": {
+          "queryReplacement": "={{ [$('Merge Doc ID').item.json.document_id, $('Merge Doc ID').item.json.line_num, $('Merge Doc ID').item.json.item_code] }}"
+        }
+      },
+      "id": "a0000001-0001-0001-0001-000000000009",
+      "name": "Get Line ID",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        940,
+        440
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const lineId = $input.item.json.id;\nconst prev = $('Merge Doc ID').first().json;\nreturn { json: { ...prev, line_id: lineId } };"
+      },
+      "id": "a0000001-0001-0001-0001-000000000010",
+      "name": "Merge Line ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO wms.wms_transactions\n  (company_code, document_id, line_id, action, item_code, item_name, quantity,\n   warehouse_code, bin_location, from_warehouse, from_bin, performed_by,\n   scanned_barcode, remarks, batch_number, production_date, transaction_time, posted_flag)\nVALUES\n  ($1, $2, $3,\n   $4, $5, $6, $7,\n   $8,\n   $9,\n   $10,\n   $11,\n   $12,\n   $13,\n   $14,\n   $15,\n   $16,\n   COALESCE($17, NOW()),\n   FALSE)",
+        "options": {
+          "queryReplacement": "={{ [$env.DP_COMPANY_CODE, $json.document_id, $json.line_id, $json.action, $json.item_code, $json.item_name, $json.quantity, $json.warehouse_code, $json.bin_location || null, $json.from_warehouse || null, $json.from_bin || null, $json.performed_by, $json.doc_type + '-' + $json.doc_number, $json.remarks || '', $json.batch_number || null, $json.production_date || null, $json.transaction_time || null] }}"
+        }
+      },
+      "id": "a0000001-0001-0001-0001-000000000011",
+      "name": "Insert Transaction",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1380,
+        440
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE wms.wms_document_lines\nSET actual_qty = actual_qty + ROUND($1::numeric, 4),\n    bin_location = COALESCE($2, bin_location),\n    status = CASE\n      WHEN ROUND((actual_qty + ROUND($1::numeric, 4))::numeric, 4) >= planned_qty AND planned_qty > 0 THEN 'completed'\n      WHEN planned_qty = 0 AND actual_qty + ROUND($1::numeric, 4) > 0 THEN 'completed'\n      WHEN actual_qty + ROUND($1::numeric, 4) > 0 THEN 'partial'\n      ELSE 'pending'\n    END,\n    wms_status = CASE\n      WHEN ROUND((actual_qty + ROUND($1::numeric, 4))::numeric, 4) >= planned_qty AND planned_qty > 0 THEN 'completed'\n      WHEN planned_qty = 0 AND actual_qty + ROUND($1::numeric, 4) > 0 THEN 'completed'\n      WHEN actual_qty + ROUND($1::numeric, 4) > 0 THEN 'partial'\n      ELSE 'pending'\n    END\nWHERE id = $3",
+        "options": {
+          "queryReplacement": "={{ [$('Merge Line ID').item.json.quantity, $('Merge Line ID').item.json.bin_location || null, $('Merge Line ID').item.json.line_id] }}"
+        }
+      },
+      "id": "a0000001-0001-0001-0001-000000000012",
+      "name": "Update Line Qty",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1600,
+        440
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE wms.wms_documents d\nSET status = 'completed', wms_status = 'completed'\nWHERE id = $1\n  AND wms_status = 'in_progress'\n  AND NOT EXISTS (\n    SELECT 1 FROM wms.wms_document_lines dl\n    WHERE dl.document_id = d.id AND dl.wms_status != 'completed'\n  )\n  AND NOT EXISTS (\n    SELECT 1 FROM wms.wms_document_lines dl2\n    WHERE dl2.document_id = d.id AND dl2.actual_qty > dl2.planned_qty AND dl2.planned_qty > 0\n  )",
+        "options": {
+          "queryReplacement": "={{ [$('Merge Line ID').item.json.document_id] }}"
+        }
+      },
+      "id": "a0000001-0001-0001-0001-000000000014",
+      "name": "Auto Complete Doc",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1820,
+        440
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"success\": true, \"message\": \"操作成功\" }",
+        "options": {}
+      },
+      "id": "a0000001-0001-0001-0001-000000000013",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2040,
+        440
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate": {
+      "main": [
+        [
+          {
+            "node": "Has Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Error?": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ensure Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Doc": {
+      "main": [
+        [
+          {
+            "node": "Get Doc ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Doc ID": {
+      "main": [
+        [
+          {
+            "node": "Merge Doc ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Doc ID": {
+      "main": [
+        [
+          {
+            "node": "Ensure Line",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Line": {
+      "main": [
+        [
+          {
+            "node": "Get Line ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Line ID": {
+      "main": [
+        [
+          {
+            "node": "Merge Line ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Line ID": {
+      "main": [
+        [
+          {
+            "node": "Insert Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Transaction": {
+      "main": [
+        [
+          {
+            "node": "Update Line Qty",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Line Qty": {
+      "main": [
+        [
+          {
+            "node": "Auto Complete Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto Complete Doc": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null
+}

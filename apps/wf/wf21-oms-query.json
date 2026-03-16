@@ -1,0 +1,661 @@
+{
+  "name": "wf21 - OMS订单查询",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "wms/oms/orders",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "o2100001-0001-0001-0001-000000000001",
+      "name": "查询订单列表",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -800,
+        300
+      ],
+      "webhookId": "wms-oms-orders"
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "wms/oms/order-lines",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "o2100001-0001-0001-0001-000000000002",
+      "name": "查询订单行",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -800,
+        700
+      ],
+      "webhookId": "wms-oms-order-lines"
+    },
+    {
+      "parameters": {
+        "jsCode": "// V2.0: 解析查询参数 + 构建动态 WHERE (支持批量单号)\nconst query = $input.first().json.query || {};\nconst companyCode = $env.DP_COMPANY_CODE;\n\nif (!companyCode) {\n  return { json: { _error: true, message: 'DP_COMPANY_CODE not set' } };\n}\n\nconst conditions = ['o.company_code = $1'];\nconst params = [companyCode];\nlet paramIdx = 2;\n\nif (query.doc_type) {\n  conditions.push(`o.doc_type = $${paramIdx++}`);\n  params.push(query.doc_type);\n}\nif (query.business_partner) {\n  conditions.push(`o.business_partner ILIKE $${paramIdx++}`);\n  params.push('%' + query.business_partner + '%');\n}\nif (query.bp_name) {\n  conditions.push(`o.bp_name ILIKE $${paramIdx++}`);\n  params.push('%' + query.bp_name + '%');\n}\nif (query.doc_num) {\n  const nums = query.doc_num.split(',').map(s => s.trim()).filter(Boolean);\n  if (nums.length > 50) {\n    return { json: { _error: true, message: '批量查询上限 50 个单号' } };\n  }\n  if (nums.length > 1) {\n    conditions.push(`(o.sap_doc_num = ANY($${paramIdx}::text[]) OR o.doc_number = ANY($${paramIdx + 1}::text[]))`);\n    params.push(nums, nums);\n    paramIdx += 2;\n  } else {\n    conditions.push(`(o.sap_doc_num ILIKE $${paramIdx} OR o.doc_number ILIKE $${paramIdx})`);\n    params.push('%' + nums[0] + '%');\n    paramIdx++;\n  }\n}\nif (query.warehouse) {\n  conditions.push(`EXISTS(SELECT 1 FROM oms.order_lines ol2 WHERE ol2.order_id = o.id AND ol2.warehouse_code = $${paramIdx})`);\n  params.push(query.warehouse.trim().toUpperCase());\n  paramIdx++;\n}\nif (query.container_no) {\n  conditions.push(`(o.container_no ILIKE $${paramIdx} OR o.id IN (SELECT dd2.parent_id FROM oms.orders dd2 WHERE dd2.container_no ILIKE $${paramIdx} AND dd2.doc_type = 'DD') OR o.sap_doc_num IN (SELECT DISTINCT ddl2.source_doc_number FROM oms.order_lines ddl2 JOIN oms.orders dd3 ON ddl2.order_id = dd3.id WHERE dd3.container_no ILIKE $${paramIdx} AND dd3.doc_type = 'DD'))`);\n  params.push('%' + query.container_no.trim() + '%');\n  paramIdx++;\n}\nif (query.oms_status) {\n  conditions.push(`o.oms_status = $${paramIdx++}`);\n  params.push(query.oms_status);\n}\nif (query.date_from) {\n  conditions.push(`o.doc_date >= $${paramIdx++}`);\n  params.push(query.date_from);\n}\nif (query.date_to) {\n  conditions.push(`o.doc_date <= $${paramIdx++}`);\n  params.push(query.date_to);\n}\n\nconst page = Math.max(1, parseInt(query.page) || 1);\nconst pageSize = Math.min(100, Math.max(1, parseInt(query.page_size) || 20));\nconst offset = (page - 1) * pageSize;\n\nconst whereClause = conditions.join(' AND ');\n\nconst countSql = `SELECT COUNT(*) AS total FROM oms.orders o WHERE ${whereClause}`;\nconst listSql = `SELECT o.id, o.doc_type, o.doc_number, o.sap_doc_entry, o.sap_doc_num,\n  o.business_partner AS bp_code, o.bp_name, o.doc_date, o.due_date,\n  o.sap_status, o.sap_cancelled, o.oms_status, o.execution_state,\n  o.doc_total, o.doc_currency,\n  CASE WHEN o.is_split THEN (SELECT STRING_AGG(DISTINCT dd_c.container_no, ', ' ORDER BY dd_c.container_no) FROM oms.orders dd_c WHERE dd_c.doc_type = 'DD' AND dd_c.container_no IS NOT NULL AND dd_c.container_no <> '' AND (dd_c.parent_id = o.id OR dd_c.id IN (SELECT DISTINCT ol_dd.order_id FROM oms.order_lines ol_dd WHERE ol_dd.source_doc_number = o.sap_doc_num))) ELSE o.container_no END AS container_no, o.is_split,\n  o.parent_id, o.split_seq, o.wms_document_id, o.created_at,\n  o.item_code, o.item_name,\n  (SELECT CASE WHEN SUM(ol.quantity) > 0\n    THEN SUM(COALESCE(ol.wms_actual_qty, 0)) / SUM(ol.quantity)\n    ELSE 0 END\n   FROM oms.order_lines ol WHERE ol.order_id = o.id) AS completion_rate,\n  COALESCE(o.warehouse_code, (SELECT CASE WHEN COUNT(DISTINCT olw.warehouse_code) = 1 THEN MIN(olw.warehouse_code) ELSE NULL END FROM oms.order_lines olw WHERE olw.order_id = o.id)) AS warehouse_code,\n  COALESCE(o.planned_qty, (SELECT COALESCE(SUM(ol2.quantity), 0) FROM oms.order_lines ol2 WHERE ol2.order_id = o.id)) AS total_planned_qty,\n  CASE WHEN o.is_split THEN (SELECT COALESCE(SUM(ol2.picked_qty), 0) FROM oms.order_lines ol2 WHERE ol2.order_id = o.id) ELSE COALESCE(o.actual_qty, (SELECT COALESCE(SUM(ol2.wms_actual_qty), 0) FROM oms.order_lines ol2 WHERE ol2.order_id = o.id)) END AS total_actual_qty\nFROM oms.orders o\nWHERE ${whereClause}\nORDER BY o.doc_date DESC, o.id DESC\nLIMIT ${pageSize} OFFSET ${offset}`;\n\nreturn { json: {\n  _error: false,\n  countSql, listSql,\n  params, page, pageSize\n} };"
+      },
+      "id": "o2100001-0001-0001-0001-000000000003",
+      "name": "构建查询",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._error }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "o2100001-0001-0001-0001-000000000004",
+      "name": "Has Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: $json.message }) }}",
+        "options": {}
+      },
+      "id": "o2100001-0001-0001-0001-000000000005",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.countSql }}",
+        "options": {
+          "queryReplacement": "={{ $json.params }}"
+        }
+      },
+      "id": "o2100001-0001-0001-0001-000000000006",
+      "name": "Count Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        200,
+        300
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $('构建查询').first().json.listSql }}",
+        "options": {
+          "queryReplacement": "={{ $('构建查询').first().json.params }}"
+        }
+      },
+      "id": "o2100001-0001-0001-0001-000000000007",
+      "name": "List Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        200,
+        500
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// V1.0: 格式化查询结果\nconst countRow = $('Count Query').first().json;\nconst total = parseInt(countRow.total) || 0;\nconst orders = total > 0 ? $('List Query').all().map(r => r.json).filter(r => r.id) : [];\nconst queryParams = $('构建查询').first().json;\n\nreturn { json: {\n  success: true,\n  orders: orders,\n  total: total,\n  page: queryParams.page,\n  page_size: queryParams.pageSize\n} };"
+      },
+      "id": "o2100001-0001-0001-0001-000000000008",
+      "name": "格式化结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        400
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "o2100001-0001-0001-0001-000000000009",
+      "name": "Respond List",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// V2.0: 解析订单行查询参数\nconst query = $input.first().json.query || {};\nconst orderId = parseInt(query.order_id);\nconst companyCode = $env.DP_COMPANY_CODE;\n\nif (!orderId || !companyCode) {\n  return { json: { _error: true, message: 'Missing order ID or company code' } };\n}\n\nreturn { json: { _error: false, orderId, companyCode } };"
+      },
+      "id": "o2100001-0001-0001-0001-000000000010",
+      "name": "解析行参数",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        700
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._error }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "o2100001-0001-0001-0001-000000000011",
+      "name": "Has Error? Lines",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: $json.message }) }}",
+        "options": {}
+      },
+      "id": "o2100001-0001-0001-0001-000000000012",
+      "name": "Error Response Lines",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ol.id, ol.order_id, ol.line_num, ol.item_code, ol.item_name,\n  ol.barcode, ol.uom, ol.quantity AS planned_qty, ol.open_quantity AS delivered_qty,\n  ol.wms_actual_qty AS actual_qty, ol.unit_price, ol.line_total,\n  ol.warehouse_code, ol.from_warehouse, ol.to_warehouse,\n  ol.batch_number, ol.serial_number, ol.status, ol.remarks,\n  ol.ship_date,\n  ol.source_line_num,\n  COALESCE(ol.source_doc_number, parent_ord.sap_doc_num, parent_ord.doc_number) AS source_doc_number,\n  ol.picked_qty,\n  (SELECT src_l.quantity FROM oms.orders src_o JOIN oms.order_lines src_l ON src_l.order_id = src_o.id AND src_l.line_num = ol.source_line_num WHERE src_o.sap_doc_num = ol.source_doc_number AND src_o.company_code = o.company_code AND src_o.doc_type = (SELECT doc_type FROM oms.orders WHERE id = o.parent_id) AND src_o.parent_id IS NULL LIMIT 1) AS source_planned_qty,\n  (SELECT STRING_AGG(\n    COALESCE(dd_ord.doc_number, dd_ord.sap_doc_num) || '#' || dd_ol.line_num::TEXT,\n    ', ' ORDER BY dd_ord.split_seq, dd_ol.line_num\n  )\n  FROM oms.order_lines dd_ol\n  JOIN oms.orders dd_ord ON dd_ol.order_id = dd_ord.id\n  WHERE dd_ord.doc_type = 'DD'\n    AND dd_ol.source_doc_number = COALESCE(o.sap_doc_num, o.doc_number)\n    AND dd_ol.source_line_num = ol.line_num\n  ) AS dd_refs\nFROM oms.order_lines ol\nINNER JOIN oms.orders o ON ol.order_id = o.id\nLEFT JOIN oms.orders parent_ord ON o.parent_id = parent_ord.id\nWHERE o.id = $1 AND o.company_code = $2\nORDER BY ol.line_num",
+        "options": {
+          "queryReplacement": "={{ [$json.orderId, $json.companyCode] }}"
+        }
+      },
+      "id": "o2100001-0001-0001-0001-000000000013",
+      "name": "Query Lines",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        200,
+        800
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT DISTINCT dd.id, dd.doc_number, dd.sap_doc_num, dd.container_no, dd.split_seq, dd.oms_status, dd.execution_state, dd.created_at\nFROM oms.orders dd\nWHERE dd.company_code = $2\n  AND dd.doc_type = 'DD'\n  AND (dd.parent_id = $1\n       OR dd.id IN (SELECT DISTINCT ol2.order_id FROM oms.order_lines ol2\n                   WHERE ol2.source_doc_number = (SELECT sap_doc_num FROM oms.orders WHERE id = $1)))\nORDER BY dd.split_seq",
+        "options": {
+          "queryReplacement": "={{ [$('解析行参数').first().json.orderId, $('解析行参数').first().json.companyCode] }}"
+        }
+      },
+      "id": "o2100001-0001-0001-0001-000000000014",
+      "name": "Query DD Children",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        200,
+        1000
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// V3.0: 合并行项目和DD子单 (去重)\nconst lines = $('Query Lines').all().map(r => r.json);\n\n// DD子单 (可能有重复，按 id 去重)\nlet ddChildren = [];\ntry {\n  const seen = new Set();\n  $('Query DD Children').all().forEach(r => {\n    if (r.json.id && !seen.has(r.json.id)) {\n      seen.add(r.json.id);\n      ddChildren.push(r.json);\n    }\n  });\n} catch(e) {\n  // Query DD Children 未执行时安全忽略\n}\n\nreturn { json: {\n  success: true,\n  lines: lines,\n  dd_children: ddChildren\n} };"
+      },
+      "id": "o2100001-0001-0001-0001-000000000015",
+      "name": "合并结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        900
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "o2100001-0001-0001-0001-000000000016",
+      "name": "Respond Lines",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "wms/oms/order-lines/batch",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "o2100001-0001-0001-0001-000000000020",
+      "name": "批量查询订单行",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -800,
+        1300
+      ],
+      "webhookId": "wms-oms-order-lines-batch"
+    },
+    {
+      "parameters": {
+        "jsCode": "// V1.0: 解析批量订单行参数\nconst query = $input.first().json.query || {};\nconst companyCode = $env.DP_COMPANY_CODE;\n\nif (!companyCode) {\n  return { json: { _error: true, message: 'DP_COMPANY_CODE not set' } };\n}\n\nconst orderIdsStr = query.order_ids || '';\nif (!orderIdsStr) {\n  return { json: { _error: true, message: 'Missing order_ids parameter' } };\n}\n\nconst idsArray = orderIdsStr.split(',').map(s => s.trim()).filter(Boolean).map(Number).filter(n => !isNaN(n) && n > 0);\nif (!Array.isArray(idsArray) || idsArray.length === 0) {\n  return { json: { _error: true, message: 'Invalid order_ids' } };\n}\nif (idsArray.length > 50) {\n  return { json: { _error: true, message: '批量查询上限 50 个订单' } };\n}\n\nreturn { json: { _error: false, idsArray, companyCode } };"
+      },
+      "id": "o2100001-0001-0001-0001-000000000021",
+      "name": "解析批量参数",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        1300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._error }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "o2100001-0001-0001-0001-000000000022",
+      "name": "Has Error? Batch",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: $json.message }) }}",
+        "options": {}
+      },
+      "id": "o2100001-0001-0001-0001-000000000023",
+      "name": "Error Response Batch",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ol.id, ol.order_id, ol.line_num, ol.item_code, ol.item_name,\n  ol.barcode, ol.uom, ol.quantity AS planned_qty, ol.open_quantity AS delivered_qty,\n  ol.wms_actual_qty AS actual_qty, ol.unit_price, ol.line_total,\n  ol.warehouse_code, ol.from_warehouse, ol.to_warehouse,\n  ol.batch_number, ol.serial_number, ol.status, ol.remarks,\n  ol.ship_date,\n  ol.source_line_num,\n  COALESCE(ol.source_doc_number, parent_ord.sap_doc_num, parent_ord.doc_number) AS source_doc_number,\n  ol.picked_qty,\n  (SELECT src_l.quantity FROM oms.orders src_o JOIN oms.order_lines src_l ON src_l.order_id = src_o.id AND src_l.line_num = ol.source_line_num WHERE src_o.sap_doc_num = ol.source_doc_number AND src_o.company_code = o.company_code AND src_o.doc_type = (SELECT doc_type FROM oms.orders WHERE id = o.parent_id) AND src_o.parent_id IS NULL LIMIT 1) AS source_planned_qty,\n  (SELECT STRING_AGG(\n    COALESCE(dd_ord.doc_number, dd_ord.sap_doc_num) || '#' || dd_ol.line_num::TEXT,\n    ', ' ORDER BY dd_ord.split_seq, dd_ol.line_num\n  )\n  FROM oms.order_lines dd_ol\n  JOIN oms.orders dd_ord ON dd_ol.order_id = dd_ord.id\n  WHERE dd_ord.doc_type = 'DD'\n    AND dd_ol.source_doc_number = COALESCE(o.sap_doc_num, o.doc_number)\n    AND dd_ol.source_line_num = ol.line_num\n  ) AS dd_refs\nFROM oms.order_lines ol\nINNER JOIN oms.orders o ON ol.order_id = o.id\nLEFT JOIN oms.orders parent_ord ON o.parent_id = parent_ord.id\nWHERE ol.order_id = ANY($1) AND o.company_code = $2\nORDER BY ol.order_id, ol.line_num",
+        "options": {
+          "queryReplacement": "={{ [$json.idsArray, $json.companyCode] }}"
+        }
+      },
+      "id": "o2100001-0001-0001-0001-000000000024",
+      "name": "Batch Query Lines",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        200,
+        1400
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT DISTINCT dd.id, dd.parent_id, dd.doc_number, dd.sap_doc_num, dd.container_no, dd.split_seq, dd.oms_status, dd.execution_state, dd.created_at,\n  COALESCE(\n    (SELECT array_agg(DISTINCT parent_so.id)\n     FROM oms.order_lines ol2\n     JOIN oms.orders parent_so ON parent_so.sap_doc_num = ol2.source_doc_number\n       AND parent_so.company_code = dd.company_code AND parent_so.parent_id IS NULL\n     WHERE ol2.order_id = dd.id AND ol2.source_doc_number IS NOT NULL\n    ), ARRAY[dd.parent_id]\n  ) AS related_order_ids\nFROM oms.orders dd\nWHERE dd.company_code = $2\n  AND dd.doc_type = 'DD'\n  AND (dd.parent_id = ANY($1)\n       OR dd.id IN (SELECT DISTINCT ol3.order_id FROM oms.order_lines ol3\n                   WHERE ol3.source_doc_number IN (SELECT sap_doc_num FROM oms.orders WHERE id = ANY($1) AND sap_doc_num IS NOT NULL)))\nORDER BY dd.split_seq",
+        "options": {
+          "queryReplacement": "={{ [$('解析批量参数').first().json.idsArray, $('解析批量参数').first().json.companyCode] }}"
+        }
+      },
+      "id": "o2100001-0001-0001-0001-000000000025",
+      "name": "Batch Query DD Children",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        200,
+        1600
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// V2.0: 合并批量行和DD子单，按 order_id 分组 (支持多 SO 关联)\nconst lines = $('Batch Query Lines').all().map(r => r.json);\nlet ddChildren = [];\ntry {\n  const seen = new Set();\n  $('Batch Query DD Children').all().forEach(r => {\n    if (r.json.id && !seen.has(r.json.id)) {\n      seen.add(r.json.id);\n      ddChildren.push(r.json);\n    }\n  });\n} catch(e) {}\n\n// 按 order_id 分组\nconst results = {};\nconst idsArray = $('解析批量参数').first().json.idsArray;\nidsArray.forEach(id => { results[id] = { lines: [], dd_children: [] }; });\n\nlines.forEach(ln => {\n  if (results[ln.order_id]) results[ln.order_id].lines.push(ln);\n});\n\n// DD 子单按 related_order_ids 分配到所有关联 SO (支持跨 SO 的 DD)\nddChildren.forEach(dd => {\n  const relatedIds = dd.related_order_ids || (dd.parent_id ? [dd.parent_id] : []);\n  relatedIds.forEach(soId => {\n    if (results[soId]) {\n      // 防重复 (同一 DD 不重复加入同一 SO)\n      if (!results[soId].dd_children.some(d => d.id === dd.id)) {\n        results[soId].dd_children.push(dd);\n      }\n    }\n  });\n});\n\nreturn { json: { success: true, results } };"
+      },
+      "id": "o2100001-0001-0001-0001-000000000026",
+      "name": "合并批量结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        1500
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "o2100001-0001-0001-0001-000000000027",
+      "name": "Respond Batch",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        1500
+      ]
+    }
+  ],
+  "connections": {
+    "查询订单列表": {
+      "main": [
+        [
+          {
+            "node": "构建查询",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "构建查询": {
+      "main": [
+        [
+          {
+            "node": "Has Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Error?": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Count Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Query": {
+      "main": [
+        [
+          {
+            "node": "List Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Query": {
+      "main": [
+        [
+          {
+            "node": "格式化结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "格式化结果": {
+      "main": [
+        [
+          {
+            "node": "Respond List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "查询订单行": {
+      "main": [
+        [
+          {
+            "node": "解析行参数",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解析行参数": {
+      "main": [
+        [
+          {
+            "node": "Has Error? Lines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Error? Lines": {
+      "main": [
+        [
+          {
+            "node": "Error Response Lines",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Query Lines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Lines": {
+      "main": [
+        [
+          {
+            "node": "Query DD Children",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query DD Children": {
+      "main": [
+        [
+          {
+            "node": "合并结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "合并结果": {
+      "main": [
+        [
+          {
+            "node": "Respond Lines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "批量查询订单行": {
+      "main": [
+        [
+          {
+            "node": "解析批量参数",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解析批量参数": {
+      "main": [
+        [
+          {
+            "node": "Has Error? Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Error? Batch": {
+      "main": [
+        [
+          {
+            "node": "Error Response Batch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Batch Query Lines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Query Lines": {
+      "main": [
+        [
+          {
+            "node": "Batch Query DD Children",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Query DD Children": {
+      "main": [
+        [
+          {
+            "node": "合并批量结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "合并批量结果": {
+      "main": [
+        [
+          {
+            "node": "Respond Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": true
+}

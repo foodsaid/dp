@@ -1,0 +1,187 @@
+# ==========================================================================
+# Authelia 核心配置 — 模板文件
+# ==========================================================================
+# 挂载路径: /config/configuration.yml.template (只读)
+# 容器启动: sed 替换 __PLACEHOLDER__ → /tmp/configuration.yml → authelia 读取
+# 密钥注入: AUTHELIA_* 环境变量 (不出现在此文件中)
+# ==========================================================================
+
+server:
+  address: 'tcp://:9091/auth'
+
+log:
+  level: 'info'
+
+authentication_backend:
+  file:
+    path: '/config/users.yml'
+    password:
+      algorithm: 'argon2id'
+
+session:
+  name: 'dp_sso_session'
+  same_site: 'lax'               # 启用 OIDC (Google OAuth) 时需改为 'none' + 确保 secure cookie
+  expiration: '1h'
+  inactivity: '30m'
+  remember_me: '7d'
+  cookies:
+    - domain: '__DP_SSO_COOKIE_DOMAIN__'
+      authelia_url: '__DP_SSO_BASE_URL__/auth'
+      default_redirection_url: '__DP_SSO_BASE_URL__'
+    # __TUNNEL_COOKIE_PLACEHOLDER__ (由 entrypoint 脚本条件注入)
+  redis:
+    host: 'dp-cache-sso'
+    port: 6379
+    database_index: 0
+    # password → AUTHELIA_SESSION_REDIS_PASSWORD 环境变量注入
+
+storage:
+  # encryption_key → AUTHELIA_STORAGE_ENCRYPTION_KEY 环境变量注入
+  postgres:
+    address: 'tcp://dp-db:5432'
+    database: '__DP_DB_NAME__'                         # sed → dp
+    schema: 'authelia'
+    username: '__DP_DB_USER__'                         # sed → dp_app
+    # password → AUTHELIA_STORAGE_POSTGRES_PASSWORD 环境变量注入
+    tls:
+      skip_verify: true                                # 自签名证书，跳过 CA 验证
+
+access_control:
+  default_policy: 'deny'
+  rules:
+    # 公开路径 (bypass) — 裸域名 + 通配符 (Tunnel 域名由 entrypoint 动态注入)
+    - domain:
+        - '__DP_DOMAIN__'
+        - '*.__DP_DOMAIN__'
+        # __TUNNEL_DOMAIN_BYPASS__
+      policy: 'bypass'
+      resources:
+        - '^/$'
+        - '^/health$'
+        - '^/auth(/.*)?$'
+        - '^/api/wms(/.*)?$'
+        - '^/api/webhook(/.*)?$'
+        - '^/api/webhook-test(/.*)?$'
+        - '^/privacy'
+        - '^/terms'
+        - '^/logo-oauth.svg'
+        - '^/(static/assets|assets)/.*\.(js|css|png|jpg|jpeg|svg|gif|ico|woff2?|ttf|eot|map)$'
+        - '^/ai(/.*)?$'
+    # 管理路径 — 允许 admins 组 (二次验证: TOTP/Passkey/WebAuthn)
+    - domain:
+        - '__DP_DOMAIN__'
+        - '*.__DP_DOMAIN__'
+        # __TUNNEL_DOMAIN_ADMIN__
+      policy: 'two_factor'
+      subject: 'group:admins'
+      resources:
+        - '^/grafana(/.*)?$'
+        - '^/prometheus(/.*)?$'
+        - '^/alertmanager(/.*)?$'
+    # 管理路径 — 拒绝非 admins (防止穿透到兜底规则)
+    - domain:
+        - '__DP_DOMAIN__'
+        - '*.__DP_DOMAIN__'
+        # __TUNNEL_DOMAIN_ADMIN_DENY__
+      policy: 'deny'
+      resources:
+        - '^/grafana(/.*)?$'
+        - '^/prometheus(/.*)?$'
+        - '^/alertmanager(/.*)?$'
+    # WMS 路径 — 允许 wms-users + admins 组
+    - domain:
+        - '__DP_DOMAIN__'
+        - '*.__DP_DOMAIN__'
+        # __TUNNEL_DOMAIN_WMS__
+      policy: 'one_factor'
+      subject:
+        - 'group:wms-users'
+        - 'group:admins'
+      resources:
+        - '^/wms(/.*)?$'
+    # WMS 路径 — 拒绝非授权组 (防止穿透到兜底规则)
+    - domain:
+        - '__DP_DOMAIN__'
+        - '*.__DP_DOMAIN__'
+        # __TUNNEL_DOMAIN_WMS_DENY__
+      policy: 'deny'
+      resources:
+        - '^/wms(/.*)?$'
+    # BI 路径 — 允许 bi-users + admins 组
+    - domain:
+        - '__DP_DOMAIN__'
+        - '*.__DP_DOMAIN__'
+        # __TUNNEL_DOMAIN_BI__
+      policy: 'one_factor'
+      subject:
+        - 'group:bi-users'
+        - 'group:admins'
+      resources:
+        - '^/superset(/.*)?$'
+        - '^/static(/.*)?$'
+        - '^/bi$'
+        - '^/bi/$'
+        - '^/(dashboard|chart|explore|sqllab|tabstateview|api/v1|roles|users)(/.*)?$'
+    # BI 路径 — 拒绝非授权组 (防止穿透到兜底规则)
+    - domain:
+        - '__DP_DOMAIN__'
+        - '*.__DP_DOMAIN__'
+        # __TUNNEL_DOMAIN_BI_DENY__
+      policy: 'deny'
+      resources:
+        - '^/superset(/.*)?$'
+        - '^/static(/.*)?$'
+        - '^/bi$'
+        - '^/bi/$'
+        - '^/(dashboard|chart|explore|sqllab|tabstateview|api/v1|roles|users)(/.*)?$'
+    # 其他路径 (所有已认证用户 — landing 页等)
+    - domain:
+        - '__DP_DOMAIN__'
+        - '*.__DP_DOMAIN__'
+        # __TUNNEL_DOMAIN_ALL__
+      policy: 'one_factor'
+
+totp:
+  issuer: 'DP Digital Platform'
+  period: 30
+  skew: 1
+
+webauthn:
+  display_name: 'DP Digital Platform'
+  attestation_conveyance_preference: 'indirect'
+  selection_criteria:
+    user_verification: 'preferred'
+  timeout: '60s'
+
+regulation:
+  max_retries: 5
+  find_time: '2m'
+  ban_time: '10m'
+
+notifier:
+  disable_startup_check: true
+  smtp:
+    address: 'submission://smtp.gmail.com:587'
+    username: '__DP_SSO_SMTP_USERNAME__'
+    # password → AUTHELIA_NOTIFIER_SMTP_PASSWORD 环境变量注入
+    sender: 'Digital Platform <__DP_SSO_SMTP_USERNAME__>'
+    subject: '[DP SSO] {title}'
+    startup_check_address: '__DP_SSO_SMTP_USERNAME__'
+
+# --- OIDC 骨架 (v0.3 预留, 取消注释启用) ---
+# 注意: RSA 私钥不可用环境变量注入 (多行换行符会摧毁 YAML)
+# 启用时将私钥存为 infrastructure/sso/oidc_private.pem, 挂载到容器
+# identity_providers:
+#   oidc:
+#     hmac_secret: 另需 AUTHELIA_IDENTITY_PROVIDERS_OIDC_HMAC_SECRET 环境变量
+#     jwks:
+#       - key_id: 'dp-main'
+#         algorithm: 'RS256'
+#         use: 'sig'
+#         key: 'file:///config/oidc_private.pem'
+#     clients:
+#       - client_id: 'grafana'
+#         client_secret: 另需 AUTHELIA_IDENTITY_PROVIDERS_OIDC_CLIENTS_0_CLIENT_SECRET 环境变量
+#         redirect_uris:
+#           - 'https://__DP_DOMAIN__/grafana/login/generic_oauth'
+#         scopes: ['openid', 'profile', 'email', 'groups']

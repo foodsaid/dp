@@ -1,0 +1,9 @@
+# 额外安全移除清单 (即使意外 commit 也从快照中删除)
+CLAUDE.local.md
+infrastructure/sso/users.yml
+infrastructure/certbot/cloudflare.ini
+infrastructure/dns/dnsmasq.conf
+.DS_Store
+
+# CI 工作流 (公开仓库无 Secrets/Runner，避免推送后立即飘红)
+.github/workflows/

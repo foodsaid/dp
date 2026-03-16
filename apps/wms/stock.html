@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WMS - 库存查询</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="shared.css?v=phase20.12">
+    <link rel="stylesheet" href="print.css?v=phase20.12">
+    <style>
+        .stock-card {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 12px;
+            padding: 12px;
+            border-left: 4px solid var(--primary-color);
+        }
+
+        .stock-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
+
+        .stock-item {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .stock-name {
+            font-size: 0.9rem;
+            color: #7f8c8d;
+            margin-bottom: 8px;
+        }
+
+        .qty-badge-group {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+
+        .qty-badge {
+            flex: 1;
+            min-width: 80px;
+            padding: 8px;
+            border-radius: 6px;
+            text-align: center;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+        }
+
+        .qty-label {
+            display: block;
+            font-size: 0.7rem;
+            color: #6c757d;
+            margin-bottom: 2px;
+        }
+
+        .qty-value {
+            display: block;
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+
+        .qty-value.highlight {
+            color: var(--primary-color);
+        }
+
+        .location-tag {
+            display: inline-block;
+            background: #e1f5fe;
+            color: #0288d1;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .bin-tag {
+            display: inline-block;
+            background: #fff3e0;
+            color: #e65100;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 4px;
+        }
+
+        .batch-tag {
+            display: inline-block;
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 4px;
+        }
+
+        .batch-info {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 6px;
+            font-size: 0.78rem;
+            color: #555;
+        }
+
+        .batch-info span {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .sync-time {
+            font-size: 0.7rem;
+            color: #aaa;
+            text-align: right;
+            margin-top: 4px;
+        }
+
+        .no-stock-message {
+            text-align: center;
+            padding: 40px 20px;
+            color: #999;
+        }
+
+        .no-stock-message .icon {
+            font-size: 3rem;
+            margin-bottom: 12px;
+        }
+
+        .no-stock-message .text {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #e74c3c;
+        }
+
+        .no-stock-message .hint {
+            font-size: 0.85rem;
+            margin-top: 8px;
+            color: #999;
+        }
+
+        .summary-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: #f0f7ff;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            font-size: 0.85rem;
+        }
+
+        .summary-bar .count {
+            font-weight: 700;
+            color: var(--primary-color);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="beep-indicator" id="beepIndicator">&#10003;</div>
+    <div id="loader" class="loader">
+        <div class="spinner"></div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <div class="header-nav">
+                <a href="index.html" class="back-link no-print">&#8592;</a>
+                <div>
+                    <h1 data-i18n="stock.title" data-short-title="Stock">库存查询</h1>
+                    <p data-i18n="stock.subtitle">扫码查询物料库存 (快照+实时变动)</p>
+                </div>
+                <button class="btn-logout no-print" onclick="logout()" data-i18n="logout">退出</button>
+            </div>
+        </div>
+
+        <!-- 搜索卡片 -->
+        <div class="card no-print">
+            <!-- 行1: 仓库 -->
+            <div class="form-group" style="margin-bottom:8px;">
+                <label class="form-label" style="font-size:0.8rem;color:#666;margin-bottom:4px;" data-i18n="field.warehouse">仓库</label>
+                <input type="text" id="whsFilter" class="form-input" list="whsList"
+                    placeholder="选择或输入仓库代码（留空=全部）" autocomplete="off" data-i18n-placeholder="stock.whs_placeholder">
+                <datalist id="whsList"></datalist>
+            </div>
+            <!-- 行2: 库位 -->
+            <div class="form-group" style="margin-bottom:8px;">
+                <label class="form-label" style="font-size:0.8rem;color:#666;margin-bottom:4px;" data-i18n="field.bin">库位</label>
+                <input type="text" id="binFilter" class="form-input"
+                    placeholder="库位筛选（留空=全部）" autocomplete="off" data-i18n-placeholder="stock.bin_placeholder">
+            </div>
+            <!-- 行3: 物料 + 按钮 -->
+            <div class="form-group mb-0">
+                <label class="form-label" style="font-size:0.8rem;color:#666;margin-bottom:4px;" data-i18n="stock.scan_hint">物料代码</label>
+                <div style="display:flex;gap:8px;">
+                    <input type="text" id="scanInput" class="form-input scan-input" placeholder="扫描物料条码..."
+                        autocomplete="off" style="flex:1;" data-i18n-placeholder="stock.item_placeholder">
+                    <button class="btn btn-primary" onclick="handleSearch()" data-i18n="common.search">查询</button>
+                    <button class="btn btn-outline" onclick="clearSearch()" data-i18n="stock.clear">清空</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 结果区域 (旧卡片模式备用) -->
+        <div id="resultContainer" class="mt-md hidden"></div>
+
+        <!-- 表格结果区域 -->
+        <div id="tableSection" class="mt-md hidden">
+            <div class="card" style="padding:0;overflow:hidden;">
+                <!-- 汇总栏 + 导出 -->
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+                    <span id="summaryText" style="font-size:0.9rem;color:#64748b;"></span>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span id="paginationInfo" style="font-size:0.85rem;color:#94a3b8;"></span>
+                        <button onclick="prevPage()" id="btnPrev" class="btn btn-outline" style="padding:4px 10px;font-size:0.8rem;" disabled>&#8592;</button>
+                        <button onclick="nextPage()" id="btnNext" class="btn btn-outline" style="padding:4px 10px;font-size:0.8rem;" disabled>&#8594;</button>
+                        <button onclick="exportCSV()" class="btn btn-outline no-print" style="padding:4px 12px;font-size:0.8rem;">&#11015; CSV</button>
+                    </div>
+                </div>
+                <!-- 数据表格 -->
+                <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;cursor:grab;">
+                    <table style="width:100%;min-width:900px;border-collapse:collapse;font-size:0.88rem;">
+                        <thead>
+                            <tr style="background:#f1f5f9;text-align:left;">
+                                <th style="padding:8px 6px;border-bottom:2px solid #e2e8f0;width:28px;"></th>
+                                <th style="padding:8px 12px;border-bottom:2px solid #e2e8f0;white-space:nowrap;" data-i18n="stock.col_item_code">物料号</th>
+                                <th style="padding:8px 12px;border-bottom:2px solid #e2e8f0;" data-i18n="stock.col_item_name">物料名称</th>
+                                <th style="padding:8px 12px;border-bottom:2px solid #e2e8f0;white-space:nowrap;" data-i18n="stock.col_whs">仓库</th>
+                                <th style="padding:8px 12px;border-bottom:2px solid #e2e8f0;white-space:nowrap;" data-i18n="stock.col_bin">库位</th>
+                                <th style="padding:8px 12px;border-bottom:2px solid #e2e8f0;white-space:nowrap;" data-i18n="stock.col_batch">批次</th>
+                                <th style="padding:8px 12px;border-bottom:2px solid #e2e8f0;text-align:right;white-space:nowrap;" data-i18n="stock.col_snap">快照数</th>
+                                <th style="padding:8px 12px;border-bottom:2px solid #e2e8f0;text-align:right;white-space:nowrap;" data-i18n="stock.col_delta">WMS变动</th>
+                                <th style="padding:8px 12px;border-bottom:2px solid #e2e8f0;text-align:right;white-space:nowrap;" data-i18n="stock.col_realtime">实时库存</th>
+                                <th style="padding:8px 12px;border-bottom:2px solid #e2e8f0;white-space:nowrap;" data-i18n="stock.col_uom">单位</th>
+                            </tr>
+                        </thead>
+                        <tbody id="stockTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 空状态 -->
+        <div id="emptyState" class="card hidden">
+            <div class="no-stock-message">
+                <div class="icon">&#128269;</div>
+                <div class="text" style="color:#999;" data-i18n="stock.empty_title">请扫描或输入物料代码开始查询</div>
+                <div class="hint" data-i18n="stock.empty_hint">支持物料编码、批次号查询</div>
+            </div>
+        </div>
+
+        <div class="version-footer no-print" data-i18n="app.version">WMS @Foodsaid 维护</div>
+    </div>
+
+    <script defer src="vendor/JsBarcode.all.min.js"></script>
+    <script defer src="vendor/qrcode.min.js"></script>
+    <script src="env.js"></script>
+    <script src="shared.js?v=phase20.12"></script>
+    <script src="lang.js?v=phase20.12"></script>
+    <script defer src="vendor/html5-qrcode.min.js?v=phase20.12b"></script>
+    <script src="camera-fallback.js?v=phase20.12"></script>
+    <script src="stock.js?v=phase20.12"></script>
+</body>
+
+</html>

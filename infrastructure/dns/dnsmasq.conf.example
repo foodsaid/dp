@@ -1,0 +1,21 @@
+# =============================================================================
+# DP — Split DNS 配置 (dnsmasq)
+# =============================================================================
+# 用途: 工厂内网 PDA 直连服务器, 绕过 Cloudflare Tunnel
+# 使用:
+#   cp dnsmasq.conf.example dnsmasq.conf
+#   vim dnsmasq.conf   # 修改为实际服务器 LAN IP
+# =============================================================================
+
+# 将域名解析到服务器 LAN IP (修改为实际 IP)
+address=/app.example.com/192.168.x.x
+address=/wf.example.com/192.168.x.x
+
+# 上游 DNS (其余域名正常解析)
+server=8.8.8.8
+server=1.1.1.1
+no-resolv
+
+# 日志 (调试用, 生产可注释)
+# log-queries
+# log-facility=/var/log/dnsmasq.log

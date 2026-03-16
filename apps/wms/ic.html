@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>库存盘点 - WMS</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="shared.css?v=phase20.12">
+    <link rel="stylesheet" href="print.css?v=phase20.12">
+    <style>
+        .ic-stock { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:12px; overflow:hidden; }
+        .ic-stock-hd { display:flex; align-items:center; padding:8px 12px; background:#eef2ff; font-size:0.85rem; font-weight:600; color:#4338ca; cursor:default; }
+        .ic-stock-hd .ic-toggle { margin-right:8px; cursor:pointer; color:#6366f1; font-size:1.1rem; min-width:20px; text-align:center; line-height:1; user-select:none; }
+        .ic-stock table { width:100%; border-collapse:collapse; font-size:0.78rem; table-layout:fixed; }
+        .ic-stock th { padding:5px 6px; background:#f1f5f9; border-bottom:1px solid #e2e8f0; text-align:left; color:#64748b; font-weight:600; white-space:nowrap; }
+        .ic-stock td { padding:5px 6px; border-bottom:1px solid #f1f5f9; word-break:break-all; }
+        .ic-stock .r { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+        .ic-stock col.c-item { width:28%; } .ic-stock col.c-bin { width:14%; } .ic-stock col.c-batch { width:12%; }
+        .ic-stock col.c-num { width:12%; } .ic-stock col.c-uom { width:10%; }
+        @media(max-width:480px) {
+            .ic-stock table { font-size:0.72rem; }
+            .ic-stock th, .ic-stock td { padding:4px 3px; }
+            .ic-stock col.c-item { width:24%; } .ic-stock col.c-batch { width:10%; }
+        }
+        .ic-stock .sum td { background:#eef2ff; font-weight:600; border-bottom:2px solid #c7d2fe; }
+        .ic-stock .sum .rt { color:#1e40af; }
+        .ic-stock .det td { background:#fff; }
+        .ic-stock .det:nth-child(even) td { background:#fafafa; }
+        .ic-stock .dp { color:#16a34a; }
+        .ic-stock .dn { color:#dc2626; }
+        .ic-stock .dz { color:#94a3b8; }
+        .ic-stock-empty { text-align:center; padding:14px; color:#94a3b8; font-size:0.85rem; }
+        .ic-skip-btn { padding:10px 16px; font-size:0.85rem; background:#059669; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600; }
+        .ic-skip-btn:hover { background:#047857; }
+    </style>
+</head>
+
+<body>
+    <div class="beep-indicator" id="beepIndicator">&#10003;</div>
+    <div id="loader" class="loader">
+        <div class="spinner"></div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <div class="header-nav">
+                <a href="index.html" class="back-link no-print">&#8592;</a>
+                <div>
+                    <span class="doc-badge-lg" id="pageBadge"></span>
+                    <h1 data-i18n="ic.title" data-short-title="IC">库存盘点 (IC)</h1>
+                    <p data-i18n="ic.subtitle">创建盘点单，扫描物料录入实盘差异</p>
+                </div>
+                <button class="btn-logout no-print" onclick="logout()" data-i18n="logout">退出</button>
+            </div>
+            <div class="print-qr hidden" id="printQr"></div>
+        </div>
+
+        <!-- 操作选择 -->
+        <div class="card no-print" id="modeCard">
+            <div class="card-title" data-i18n="lm.select_op">选择操作</div>
+            <div class="btn-group">
+                <button class="btn btn-primary btn-block" onclick="showCreateForm()" data-i18n="ic.new_count">新建盘点单</button>
+                <button class="btn btn-outline btn-block" onclick="showLoadForm()" data-i18n="ic.load_count">查看盘点凭证</button>
+            </div>
+        </div>
+
+        <!-- 新建盘点 -->
+        <div class="card hidden" id="createCard">
+            <div class="card-title" data-i18n="ic.new_count">新建盘点单</div>
+            <form id="createForm" onsubmit="handleCreate(event)">
+                <div class="form-group">
+                    <label class="form-label" data-i18n="lm.whs_code">仓库代码 *</label>
+                    <input type="text" id="createWhs" class="form-input" placeholder="输入仓库代码"
+                        data-i18n-placeholder="ic.whs_placeholder" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="ic.counter">盘点人 *</label>
+                    <input type="text" id="createUser" class="form-input" placeholder="输入盘点人"
+                        data-i18n-placeholder="ic.counter_placeholder" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="common.remark">备注</label>
+                    <textarea id="createRemark" class="form-input form-textarea"
+                        placeholder="选填备注" data-i18n-placeholder="field.remark_placeholder"></textarea>
+                </div>
+                <div class="btn-group">
+                    <button type="submit" class="btn btn-primary btn-block" data-i18n="common.create">创建</button>
+                    <button type="button" class="btn btn-outline" onclick="backToMode()" data-i18n="common.back">返回</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- 加载已有盘点 -->
+        <div class="card hidden" id="loadCard">
+            <div class="card-title" data-i18n="ic.load_count">查看盘点凭证</div>
+            <div class="form-group">
+                <input type="text" id="loadInput" class="form-input scan-input"
+                    placeholder="输入盘点单号或扫描条码..."
+                    data-i18n-placeholder="ic.load_placeholder">
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-outline" onclick="backToMode()" data-i18n="common.back">返回</button>
+            </div>
+        </div>
+
+        <!-- 盘点信息 -->
+        <div class="card hidden" id="countCard">
+            <div class="card-title" data-i18n="ic.count_info">盘点信息</div>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.doc_num">盘点单号</span>
+                    <span class="info-value" id="docNum">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.warehouse">仓库</span>
+                    <span class="info-value" id="warehouse">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="ic.counter">盘点人</span>
+                    <span class="info-value" id="countUser">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="ic.counted">已盘品种</span>
+                    <span class="info-value highlight" id="countedItems">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 扫码盘点 -->
+        <div class="card hidden" id="scanCard">
+            <div class="card-title" data-i18n="ic.scan_count">扫码盘点</div>
+            <div class="form-group">
+                <label class="form-label" data-i18n="lm.scan_item">扫描物料条码</label>
+                <input type="text" id="itemScan" class="form-input scan-input"
+                    placeholder="扫描物料条码..." data-i18n-placeholder="ic.scan_item_placeholder">
+            </div>
+            <!-- 隐藏字段: 存储扫描到的物料信息 -->
+            <span id="scanItemCode" style="display:none">-</span>
+            <span id="scanItemName" style="display:none">-</span>
+
+            <div class="hidden" id="itemInfo">
+                <!-- 库存预览 -->
+                <div id="stockPreviewPanel" class="ic-stock">
+                    <div class="ic-stock-hd">
+                        <span class="ic-toggle" id="icToggle" onclick="toggleStockDetail()"></span>
+                        <span>系统库存</span>
+                    </div>
+                    <div id="icStockBody"></div>
+                </div>
+
+                <form id="countForm" onsubmit="handleCount(event)">
+                    <!-- V19.5: 库位移到数量上方, 聚焦链: itemScan → countBin → countQty -->
+                    <div class="form-group">
+                        <label class="form-label" data-i18n="field.bin_optional">库位 (选填)</label>
+                        <div style="display:flex;gap:6px;">
+                            <input type="text" id="countBin" class="form-input"
+                                placeholder="输入或扫描库位..." data-i18n-placeholder="field.bin_input_placeholder" style="flex:1;">
+                            <button type="button" class="btn btn-outline" onclick="addBinToDict('countBin')" title="新增到库位字典" style="padding:10px 16px;font-size:1.1rem;flex-shrink:0;min-width:44px;min-height:44px;">+</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" data-i18n="ic.count_qty">实盘和系统的差异 *</label>
+                        <input type="number" id="countQty" class="form-input number-input" step="0.0001"
+                            required onclick="this.select()" onfocus="this.select()"
+                            placeholder="正数=多, 负数=少" data-i18n-placeholder="ic.qty_placeholder">
+                        <div class="form-hint" style="font-size:0.75rem;color:#6b7280;margin-top:4px;" data-i18n="ic.count_qty_hint">正数=实际比系统多，负数=实际比系统少。库存一致则无需记录，直接扫下一个物料</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" data-i18n="common.remark">备注</label>
+                        <textarea id="countRemark" class="form-input form-textarea"
+                            placeholder="选填备注" data-i18n-placeholder="field.remark_placeholder"></textarea>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <button type="submit" class="btn btn-primary" style="flex:1;" data-i18n="ic.record">记录盘点</button>
+                        <button type="button" class="ic-skip-btn" onclick="skipItem()" style="flex-shrink:0;padding:10px 16px;">一致，跳过</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- V16.4: 待提交清单 -->
+        <div class="card hidden" id="pendingCard">
+            <div class="card-title">待提交清单 <span id="pendingCount" style="color:#f59e0b;">(0)</span></div>
+            <div class="table-container">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>物料</th>
+                            <th>差异数</th>
+                            <th>库位</th>
+                            <th>时间</th>
+                            <th class="no-print">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pendingBody">
+                        <tr><td colspan="5" class="no-data">暂无待提交记录</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="btn-group no-print" style="margin-top:12px;">
+                <button class="btn btn-primary btn-block" onclick="submitAllCounts()">批量提交</button>
+                <button class="btn btn-outline" onclick="clearPending()">清空</button>
+            </div>
+        </div>
+
+        <!-- 盘点明细 -->
+        <div class="card hidden" id="detailCard">
+            <div class="card-title" data-i18n="ic.detail">盘点明细</div>
+            <div class="table-container">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th data-i18n="field.item_code">物料</th>
+                            <th data-i18n="field.barcode">条码</th>
+                            <th data-i18n="field.item_name">名称</th>
+                            <th data-i18n="field.actual_qty">实盘数</th>
+                            <th data-i18n="field.bin">库位</th>
+                            <th data-i18n="field.time">时间</th>
+                        </tr>
+                    </thead>
+                    <tbody id="detailBody">
+                        <tr>
+                            <td colspan="6" class="no-data" data-i18n="common.no_data">暂无记录</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card hidden no-print" id="actionCard">
+            <div class="btn-group">
+                <button class="btn btn-success" onclick="completeCount()" data-i18n="ic.complete">完成盘点</button>
+                <button class="btn btn-outline" onclick="printDocument()" data-i18n="common.print">打印盘点单</button>
+                <button class="btn btn-danger" onclick="backToMode()" data-i18n="common.back">返回</button>
+            </div>
+        </div>
+
+        <div class="print-footer hidden">
+            WMS 库存盘点单 | 打印时间: <span id="printTime"></span>
+        </div>
+        <div class="version-footer no-print" data-i18n="app.version">WMS @Foodsaid 维护</div>
+    </div>
+
+    <script defer src="vendor/JsBarcode.all.min.js"></script>
+    <script defer src="vendor/qrcode.min.js"></script>
+    <script src="env.js"></script>
+    <script src="shared.js?v=phase20.12"></script>
+    <script src="lang.js?v=phase20.12"></script>
+    <script defer src="vendor/html5-qrcode.min.js?v=phase20.12b"></script>
+    <script src="camera-fallback.js?v=phase20.12"></script>
+    <script src="ic.js?v=phase20.12"></script>
+</body>
+
+</html>
