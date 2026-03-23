@@ -1,0 +1,305 @@
+{
+  "name": "wf22 - OMS DD拆单管理",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wms/oms/dd/split",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "o2200001-0001-0001-0001-000000000001",
+      "name": "DD拆单请求",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -800,
+        300
+      ],
+      "webhookId": "wms-oms-dd-split"
+    },
+    {
+      "parameters": {
+        "jsCode": "// V2.0: 验证 DD 拆单请求 (支持多 SO 合并)\nconst body = $input.first().json.body || {};\nconst companyCode = $env.DP_COMPANY_CODE;\n\nif (!companyCode) {\n  return { json: { _error: true, message: 'DP_COMPANY_CODE not set' } };\n}\n\n// 支持新格式 source_order_ids (数组) 和旧格式 source_order_id (单个)\nlet sourceOrderIds = [];\nif (Array.isArray(body.source_order_ids) && body.source_order_ids.length > 0) {\n  sourceOrderIds = body.source_order_ids.map(id => parseInt(id)).filter(id => id > 0);\n} else if (body.source_order_id) {\n  const single = parseInt(body.source_order_id);\n  if (single > 0) sourceOrderIds = [single];\n}\nif (sourceOrderIds.length === 0) {\n  return { json: { _error: true, message: '缺少 source_order_ids' } };\n}\n\nconst ddGroups = body.dd_groups;\nif (!Array.isArray(ddGroups) || ddGroups.length === 0) {\n  return { json: { _error: true, message: '缺少 dd_groups' } };\n}\n\n// 验证每个 DD 组\nfor (let i = 0; i < ddGroups.length; i++) {\n  const g = ddGroups[i];\n  if (!Array.isArray(g.lines) || g.lines.length === 0) {\n    return { json: { _error: true, message: `DD #${i+1} 缺少行项目` } };\n  }\n  for (const ln of g.lines) {\n    if (!ln.item_code || typeof ln.qty !== 'number' || ln.qty <= 0) {\n      return { json: { _error: true, message: `DD #${i+1} 行项目无效: ${ln.item_code}` } };\n    }\n  }\n}\n\nreturn { json: {\n  _error: false,\n  company_code: companyCode,\n  source_order_ids: sourceOrderIds,\n  dd_groups: ddGroups\n} };"
+      },
+      "id": "o2200001-0001-0001-0001-000000000002",
+      "name": "验证请求",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._error }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "o2200001-0001-0001-0001-000000000003",
+      "name": "Has Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: $json.message }) }}",
+        "options": {}
+      },
+      "id": "o2200001-0001-0001-0001-000000000004",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT o.id, o.doc_type, o.sap_doc_num, o.doc_number, o.business_partner, o.bp_name, o.warehouse_code, o.doc_date, o.due_date, o.oms_status, o.execution_state, o.is_split FROM oms.orders o WHERE o.id = ANY($1::int[]) AND o.company_code = $2 AND o.parent_id IS NULL",
+        "options": {
+          "queryReplacement": "={{ ['{' + $json.source_order_ids.join(',') + '}', $json.company_code] }}"
+        }
+      },
+      "id": "o2200001-0001-0001-0001-000000000005",
+      "name": "查询源订单",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        200,
+        400
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ==========================================================\n// V2.0: 生成 DD 拆单 SQL (支持多 SO 合并到同一个 DD)\n// DD 编号格式: DD + YY + 6位序列 (DD26000001)\n// 每个容器 = 1 个 DD (非按 SO×容器)\n// ==========================================================\n\n// SQL 安全转义\nfunction esc(val) {\n    if (val == null) return 'NULL';\n    return \"'\" + String(val).replace(/'/g, \"''\") + \"'\";\n}\n\nconst validated = $('验证请求').first().json;\nconst sourceOrders = $('查询源订单').all().map(item => item.json);\n\nif (!sourceOrders || sourceOrders.length === 0) {\n    return { json: { _error: true, message: '未找到源订单' } };\n}\n\ntry {\n    const companyCode = validated.company_code;\n    const ddGroups = validated.dd_groups || [];\n    const sourceOrderIds = validated.source_order_ids;\n\n    // 建立 sourceOrder 查找表 (id → order)\n    const soMap = {};\n    sourceOrders.forEach(so => { soMap[so.id] = so; });\n\n    // 第一个源订单作为 DD 头部默认值\n    const primarySO = sourceOrders[0];\n\n    // 幂等键: 排序的源订单 ID 组合\n    const sortedIds = sourceOrderIds.slice().sort((a, b) => a - b).join('_');\n\n    // 所有 DD 的 SQL 合并为一条事务\n    const sqlParts = [];\n\n    ddGroups.forEach((group, index) => {\n        if (!group.lines || group.lines.length === 0) return;\n        const ddIndex = index + 1;\n        const containerNo = group.container_no || '';\n        const idempotencyKey = sortedIds + '_DD_' + ddIndex;\n\n        // 确定此 DD 的 parent_id (第一行的 source_order_id, 或 primarySO)\n        const firstLineSourceId = group.lines[0].source_order_id || sourceOrderIds[0];\n\n        // 确定客商信息 (从源订单中取)\n        const parentSO = soMap[firstLineSourceId] || primarySO;\n\n        // 为 lines 添加 source_doc_num (从 soMap 查找)\n        const enrichedLines = group.lines.map(ln => {\n            const srcSO = soMap[ln.source_order_id] || primarySO;\n            return {\n                item_code: ln.item_code,\n                item_name: ln.item_name || '',\n                qty: ln.qty,\n                source_line_num: ln.line_num,\n                source_doc_number: srcSO.sap_doc_num || srcSO.doc_number || '',\n                warehouse_code: ln.warehouse_code || srcSO.warehouse_code || ''\n            };\n        });\n\n        const linesJson = JSON.stringify(enrichedLines);\n\n        // DD 编号: DD + YY(2位年份) + 6位序列号\n        const sql = `\nWITH dd_${ddIndex} AS (\n    INSERT INTO oms.orders (\n        company_code, doc_type, doc_number, parent_id, is_split, split_seq,\n        container_no, sap_doc_num, business_partner, bp_name,\n        warehouse_code, doc_date, due_date, oms_status, idempotency_key, created_by\n    ) VALUES (\n        ${esc(companyCode)}, 'DD',\n        'DD' || TO_CHAR(NOW(), 'YY') || LPAD(nextval('oms.dd_doc_seq')::TEXT, 6, '0'),\n        ${firstLineSourceId}, FALSE, ${ddIndex},\n        ${esc(containerNo)}, NULL,\n        ${esc(parentSO.business_partner || '')},\n        ${esc(parentSO.bp_name || '')},\n        ${esc(parentSO.warehouse_code || '')},\n        CURRENT_DATE,\n        ${parentSO.due_date ? esc(parentSO.due_date) : 'NULL'},\n        'pending', ${esc(idempotencyKey)}, 'wf22'\n    )\n    ON CONFLICT (company_code, idempotency_key) WHERE idempotency_key IS NOT NULL\n    DO NOTHING\n    RETURNING id\n)\nINSERT INTO oms.order_lines (\n    order_id, line_num, item_code, item_name,\n    quantity, open_quantity, warehouse_code, source_line_num, source_doc_number\n)\nSELECT\n    dd_${ddIndex}.id,\n    ROW_NUMBER() OVER (ORDER BY elem_idx) AS line_num,\n    (elem.value->>'item_code')::TEXT,\n    COALESCE((elem.value->>'item_name')::TEXT, ''),\n    (elem.value->>'qty')::DECIMAL(18,4),\n    (elem.value->>'qty')::DECIMAL(18,4),\n    COALESCE((elem.value->>'warehouse_code')::TEXT, ''),\n    (elem.value->>'source_line_num')::INTEGER,\n    (elem.value->>'source_doc_number')::TEXT\nFROM dd_${ddIndex},\n     jsonb_array_elements(${esc(linesJson)}::JSONB) WITH ORDINALITY AS elem(value, elem_idx)`;\n\n        sqlParts.push(sql);\n    });\n\n    if (sqlParts.length === 0) {\n        return { json: { _error: true, message: '无有效 DD 可创建' } };\n    }\n\n    // 标记所有源订单为已拆分\n    const updateParts = sourceOrderIds.map(id =>\n        `UPDATE oms.orders SET is_split = TRUE, oms_status = 'split' WHERE id = ${id} AND oms_status <> 'split'`\n    );\n\n    // 同步 WMS 文档状态为 split (UPSERT: 存在则更新, 不存在则创建)\n    const wmsUpsertParts = sourceOrders\n        .filter(so => so.sap_doc_num)\n        .map(so =>\n            `INSERT INTO wms.wms_documents (company_code, doc_type, doc_number, sap_doc_num, status, wms_status, business_partner, bp_name, warehouse_code, created_by)\n             VALUES (${esc(companyCode)}, 'SO', ${esc(so.sap_doc_num)}, ${esc(so.sap_doc_num)}, 'draft', 'split', ${esc(so.business_partner || '')}, ${esc(so.bp_name || '')}, ${esc(so.warehouse_code || '')}, 'wf22')\n             ON CONFLICT (company_code, doc_type, doc_number) DO UPDATE SET\n               wms_status = CASE WHEN wms.wms_documents.wms_status NOT IN ('completed', 'exported') THEN 'split' ELSE wms.wms_documents.wms_status END`\n        );\n\n    // 合并为单条 SQL (事务内)\n    const fullSql = sqlParts.join(';\\n') + ';\\n' + updateParts.join(';\\n') + ';\\n' + wmsUpsertParts.join(';\\n') + ';';\n\n    return [{ json: { sql: fullSql, dd_count: sqlParts.length } }];\n} catch (error) {\n    throw new Error('Data Transformation Failed: ' + error.message);\n}"
+      },
+      "id": "o2200001-0001-0001-0001-000000000006",
+      "name": "生成拆单SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        400
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._error }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "o2200001-0001-0001-0001-000000000007",
+      "name": "Check SQL Error",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        760,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: $json.message }) }}",
+        "options": {}
+      },
+      "id": "o2200001-0001-0001-0001-000000000008",
+      "name": "SQL Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1040,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "id": "o2200001-0001-0001-0001-000000000009",
+      "name": "执行拆单",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        500
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// V2.0: 拆单成功响应\nconst ddCount = $('生成拆单SQL').first().json.dd_count || 0;\n\nreturn { json: {\n  success: true,\n  dd_count: ddCount,\n  message: `成功创建 ${ddCount} 个DD`\n} };"
+      },
+      "id": "o2200001-0001-0001-0001-000000000010",
+      "name": "成功响应",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        500
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "o2200001-0001-0001-0001-000000000011",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1600,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "DD拆单请求": {
+      "main": [
+        [
+          {
+            "node": "验证请求",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "验证请求": {
+      "main": [
+        [
+          {
+            "node": "Has Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Error?": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "查询源订单",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "查询源订单": {
+      "main": [
+        [
+          {
+            "node": "生成拆单SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "生成拆单SQL": {
+      "main": [
+        [
+          {
+            "node": "Check SQL Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check SQL Error": {
+      "main": [
+        [
+          {
+            "node": "SQL Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "执行拆单",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "执行拆单": {
+      "main": [
+        [
+          {
+            "node": "成功响应",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "成功响应": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": true
+}

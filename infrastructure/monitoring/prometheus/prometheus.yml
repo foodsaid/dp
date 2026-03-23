@@ -1,0 +1,85 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  scrape_timeout: 8s
+  external_labels:
+    cluster: dp
+
+alerting:
+  alertmanagers:
+    - path_prefix: /alertmanager
+      static_configs:
+        - targets: ['dp-alertmanager:9093']
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # 1. Prometheus 自身 (route-prefix=/prometheus/, metrics 路径相应变更)
+  - job_name: 'prometheus'
+    metrics_path: /prometheus/metrics
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # 2. Node Exporter — 宿主机
+  - job_name: 'node'
+    static_configs:
+      - targets: ['dp-node-exporter:9100']
+
+  # 3. cAdvisor — 容器
+  - job_name: 'cadvisor'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['dp-cadvisor:8080']
+
+  # 4. n8n — 工作流引擎 (main + worker)
+  - job_name: 'n8n'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['dp-wf:5678']
+        labels:
+          role: 'main'
+      - targets: ['dp-wf-worker:5678']
+        labels:
+          role: 'worker'
+
+  # 5. PostgreSQL
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['dp-pg-exporter:9187']
+
+  # 6. Redis WF — 独立 exporter (WF/BI 密码不同, 不能用 multi-target)
+  - job_name: 'redis-wf'
+    static_configs:
+      - targets: ['dp-redis-exporter-wf:9121']
+        labels:
+          redis_instance: 'wf'
+    relabel_configs:
+      - target_label: job
+        replacement: redis
+
+  # 7. Redis BI — 独立 exporter
+  - job_name: 'redis-bi'
+    static_configs:
+      - targets: ['dp-redis-exporter-bi:9122']
+        labels:
+          redis_instance: 'bi'
+    relabel_configs:
+      - target_label: job
+        replacement: redis
+
+  # 8. Alertmanager 自身 (route-prefix=/alertmanager/, metrics 路径相应变更)
+  - job_name: 'alertmanager'
+    metrics_path: /alertmanager/metrics
+    static_configs:
+      - targets: ['dp-alertmanager:9093']
+
+  # 9. Loki — 日志聚合引擎
+  - job_name: 'loki'
+    static_configs:
+      - targets: ['dp-loki:3100']
+
+  # 10. Alloy — 日志采集器 (替代已 EOL 的 Promtail)
+  - job_name: 'alloy'
+    static_configs:
+      - targets: ['dp-alloy:12345']

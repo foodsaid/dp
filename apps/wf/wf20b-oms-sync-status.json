@@ -1,0 +1,76 @@
+{
+  "name": "wf20b - OMS同步进度查询",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "wms/oms/sync/status",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "o20b0001-0001-0001-0001-000000000001",
+      "name": "进度查询触发",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [-400, 300],
+      "webhookId": "wms-oms-sync-status"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT set_config('app.company_code', $1, false) AS cc",
+        "options": { "queryReplacement": "={{ [$env.DP_COMPANY_CODE] }}" }
+      },
+      "id": "o20b0001-0001-0001-0001-000000000002",
+      "name": "RLS set_config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-100, 300],
+      "credentials": { "postgres": { "id": "__CREDENTIAL_PG_WMS__", "name": "__CREDENTIAL_PG_WMS_NAME__" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT doc_type, COUNT(*) AS total, COUNT(*) FILTER (WHERE status='completed') AS completed, COUNT(*) FILTER (WHERE status='running') AS running, COUNT(*) FILTER (WHERE status='failed') AS failed, COUNT(*) FILTER (WHERE status='pending') AS pending, MAX(CASE WHEN status='running' THEN month_start::text END) AS current_month, MAX(CASE WHEN status='failed' THEN error_message END) AS last_error FROM oms.sync_progress WHERE company_code = current_setting('app.company_code') GROUP BY doc_type ORDER BY doc_type",
+        "options": {}
+      },
+      "id": "o20b0001-0001-0001-0001-000000000003",
+      "name": "查询进度",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [200, 300],
+      "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "__CREDENTIAL_PG_WMS__", "name": "__CREDENTIAL_PG_WMS_NAME__" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "// V1.0: 格式化同步进度\nconst rows = $input.all().map(r => r.json);\nif (rows.length === 0 || !rows[0].doc_type) {\n  return { json: { success: true, syncing: false, progress: [], overall_pct: 0, last_error: null } };\n}\nlet totalBatches = 0, completedBatches = 0, lastError = null, syncing = false;\nconst progress = rows.map(r => {\n  const total = Number(r.total) || 0;\n  const completed = Number(r.completed) || 0;\n  const running = Number(r.running) || 0;\n  const failed = Number(r.failed) || 0;\n  const pending = Number(r.pending) || 0;\n  totalBatches += total; completedBatches += completed;\n  if (running > 0 || pending > 0) syncing = true;\n  if (r.last_error) lastError = r.last_error;\n  return { doc_type: r.doc_type, total, completed, running, failed, pending, current_month: r.current_month || null };\n});\nconst overallPct = totalBatches > 0 ? Math.round(completedBatches / totalBatches * 100) : 0;\nreturn { json: { success: true, syncing, progress, overall_pct: overallPct, last_error: lastError } };"
+      },
+      "id": "o20b0001-0001-0001-0001-000000000004",
+      "name": "格式化结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "o20b0001-0001-0001-0001-000000000005",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [800, 300]
+    }
+  ],
+  "connections": {
+    "进度查询触发": { "main": [[{ "node": "RLS set_config", "type": "main", "index": 0 }]] },
+    "RLS set_config": { "main": [[{ "node": "查询进度", "type": "main", "index": 0 }]] },
+    "查询进度": { "main": [[{ "node": "格式化结果", "type": "main", "index": 0 }]] },
+    "格式化结果": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

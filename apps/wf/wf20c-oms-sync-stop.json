@@ -1,0 +1,47 @@
+{
+  "name": "wf20c - OMS同步停止",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wms/oms/sync/stop", "responseMode": "responseNode", "options": {} },
+      "id": "o20c0001-0001-0001-0001-000000000001",
+      "name": "停止触发",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [-200, 300],
+      "webhookId": "wms-oms-sync-stop"
+    },
+    {
+      "parameters": { "operation": "executeQuery", "query": "SELECT set_config('app.company_code', $1, false) AS cc", "options": { "queryReplacement": "={{ [$env.DP_COMPANY_CODE] }}" } },
+      "id": "o20c0001-0001-0001-0001-000000000002",
+      "name": "RLS set_config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [100, 300],
+      "credentials": { "postgres": { "id": "__CREDENTIAL_PG_WMS__", "name": "__CREDENTIAL_PG_WMS_NAME__" } }
+    },
+    {
+      "parameters": { "operation": "executeQuery", "query": "WITH stopped AS (UPDATE oms.sync_progress SET status='failed', error_message='用户手动停止', completed_at=NOW() WHERE status IN ('pending','running') AND company_code=current_setting('app.company_code') RETURNING id) SELECT COUNT(*) AS stopped_count FROM stopped", "options": {} },
+      "id": "o20c0001-0001-0001-0001-000000000003",
+      "name": "停止队列",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [400, 300],
+      "credentials": { "postgres": { "id": "__CREDENTIAL_PG_WMS__", "name": "__CREDENTIAL_PG_WMS_NAME__" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ JSON.stringify({ success: true, stopped: $json.stopped_count, message: '已停止 ' + $json.stopped_count + ' 个待同步批次' }) }}", "options": {} },
+      "id": "o20c0001-0001-0001-0001-000000000004",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [700, 300]
+    }
+  ],
+  "connections": {
+    "停止触发": { "main": [[{ "node": "RLS set_config", "type": "main", "index": 0 }]] },
+    "RLS set_config": { "main": [[{ "node": "停止队列", "type": "main", "index": 0 }]] },
+    "停止队列": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

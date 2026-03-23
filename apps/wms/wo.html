@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>生产订单 - WMS</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="shared.css?v=phase20.15">
+    <link rel="stylesheet" href="print.css?v=phase20.15">
+</head>
+
+<body>
+    <div class="beep-indicator" id="beepIndicator">&#10003;</div>
+    <div id="loader" class="loader">
+        <div class="spinner"></div>
+    </div>
+
+    <div class="container">
+        <!-- 表头 -->
+        <div class="header">
+            <div class="header-nav">
+                <a href="index.html" class="back-link no-print" onclick="releaseDocumentLock()">&#8592;</a>
+                <div>
+                    <span class="doc-badge-lg" id="pageBadge"></span>
+                    <h1 data-i18n="wo.title" data-short-title="WO">生产收货 WO</h1>
+                    <p data-i18n="wo.subtitle">扫描或输入生产订单号，执行收货操作</p>
+                </div>
+                <button class="btn-logout no-print" onclick="logout()" data-i18n="logout">退出</button>
+            </div>
+            <!-- 打印用QR码 -->
+            <div class="print-qr hidden" id="printQr"></div>
+        </div>
+
+        <!-- 扫码/输入 -->
+        <div class="card no-print">
+            <div class="card-title" data-i18n="po.query">查询订单</div>
+            <div class="form-group">
+                <input type="text" id="scanInput" class="form-input scan-input" placeholder="扫描条码或输入单号..." data-i18n-placeholder="po.scan_hint"
+                    autocomplete="off" autocorrect="off">
+                <div class="form-hint" data-i18n="wo.scan_format_hint">输入SAP生产订单号或扫描WO条码</div>
+            </div>
+        </div>
+
+        <!-- 订单信息 (初始隐藏) -->
+        <div class="card hidden" id="orderCard">
+            <div class="card-title" data-i18n="po.order_info">订单信息</div>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.doc_num">订单号</span>
+                    <span class="info-value" id="docNum">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.item_code">物料编号</span>
+                    <span class="info-value" id="itemCode">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.item_name">物料名称</span>
+                    <span class="info-value" id="itemName">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.warehouse">仓库</span>
+                    <span class="info-value" id="warehouse">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.planned_qty">计划数量</span>
+                    <span class="info-value highlight" id="plannedQty">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="status.completed">已完成</span>
+                    <span class="info-value" id="completedQty">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="po.wms_received">WMS已收</span>
+                    <span class="info-value text-success" id="wmsReceivedQty">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.remaining">剩余数量</span>
+                    <span class="info-value text-error" id="remainingQty">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.due_date">到期日</span>
+                    <span class="info-value" id="dueDate">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.uom">单位</span>
+                    <span class="info-value" id="uom">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.sap_status">SAP状态</span>
+                    <span class="info-value" id="docStatus">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.wms_status">WMS状态</span>
+                    <span class="info-value" id="wmsStatus">-</span>
+                </div>
+            </div>
+
+            <!-- 进度条 -->
+            <div class="progress-container">
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar" id="progressBar" style="width: 0%">
+                        <span class="progress-text" id="progressText">0%</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 一键收货 -->
+            <div class="no-print hidden" id="oneClickDiv" style="margin-top:12px;">
+                <button type="button" class="btn-oneclick" onclick="oneClickReceive()" data-i18n="wo.one_click">
+                    ⚡ 一键收货 (剩余全部)
+                </button>
+            </div>
+        </div>
+
+        <!-- 收货表单 (初始隐藏) -->
+        <div class="card hidden" id="receiptCard">
+            <div class="card-title" data-i18n="wo.receipt_form">收货录入</div>
+            <form id="receiptForm" onsubmit="handleSubmit(event)" novalidate>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="po.receipt_qty">收货数量 *</label>
+                    <input type="number" id="receiptQty" class="form-input number-input" step="0.0001" min="0.0001"
+                        required placeholder="输入收货数量" data-i18n-placeholder="wo.receipt_qty_hint"
+                        onclick="this.select()" onfocus="this.select()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="field.bin_location">库位</label>
+                    <input type="text" id="binLocation" class="form-input"
+                        placeholder="默认按仓库生成" data-i18n-placeholder="field.bin_placeholder" autocomplete="off">
+                </div>
+                <!-- 批次输入区 (生产订单收货) -->
+                <div class="batch-input-section" id="batchSection">
+                    <div class="form-group">
+                        <label class="form-label" data-i18n="field.batch">批次号</label>
+                        <input type="text" id="batchNumber" class="form-input" placeholder="扫描或输入批次号"
+                            data-i18n-placeholder="field.batch_placeholder" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" data-i18n="field.prod_date">生产日期</label>
+                        <input type="text" id="productionDate" class="form-input" placeholder="如 20260212"
+                            data-i18n-placeholder="field.prod_date_placeholder" pattern="[0-9]{8}" maxlength="8" inputmode="numeric">
+                        <div class="form-hint" data-i18n="field.date_format_hint">YYYYMMDD格式，默认当天</div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="field.operator">操作人 *</label>
+                    <input type="text" id="receiptUser" class="form-input" required
+                        placeholder="操作人姓名" data-i18n-placeholder="field.operator_placeholder">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="common.remark">备注</label>
+                    <textarea id="receiptRemark" class="form-input form-textarea"
+                        placeholder="选填备注" data-i18n-placeholder="field.remark_placeholder"></textarea>
+                </div>
+                <div class="btn-group">
+                    <button type="submit" class="btn btn-primary btn-block" data-i18n="po.submit_receipt">提交收货</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- 已完成提示 -->
+        <div class="card hidden" id="completeCard">
+            <div class="alert alert-success" data-i18n="po.completed">
+                该订单已全部完成收货。
+            </div>
+        </div>
+
+        <!-- 操作历史 -->
+        <div class="card hidden" id="historyCard">
+            <div class="card-title" data-i18n="po.history">操作历史</div>
+            <div class="table-container">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th data-i18n="field.item_code">物料</th>
+                            <th data-i18n="field.item_name">名称</th>
+                            <th data-i18n="field.time">时间</th>
+                            <th data-i18n="field.qty">数量</th>
+                            <th data-i18n="field.operator">操作人</th>
+                            <th data-i18n="common.remark">备注</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyBody">
+                        <tr>
+                            <td colspan="6" class="no-data" data-i18n="common.no_data">暂无记录</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="card hidden no-print" id="actionCard">
+            <div class="btn-group">
+                <button class="btn btn-outline" onclick="printDocument()" data-i18n="common.print">打印单据</button>
+                <button class="btn btn-outline" onclick="printBarcode()" data-i18n="common.print_barcode">打印条码</button>
+                <button class="btn btn-danger" onclick="resetPage()" data-i18n="common.reset">重新查询</button>
+            </div>
+        </div>
+
+        <!-- 打印页脚 -->
+        <div class="print-footer hidden">
+            WMS 生产订单收货单 | 打印时间: <span id="printTime"></span>
+        </div>
+        <div class="version-footer no-print" data-i18n="app.version">WMS @Foodsaid 维护</div>
+    </div>
+
+    <script defer src="vendor/JsBarcode.all.min.js"></script>
+    <script defer src="vendor/qrcode.min.js"></script>
+    <script src="env.js"></script>
+    <script src="shared.js?v=phase20.15"></script>
+    <script src="lang.js?v=phase20.15"></script>
+    <script defer src="vendor/html5-qrcode.min.js?v=phase20.15b"></script>
+    <script src="camera-fallback.js?v=phase20.15"></script>
+    <script src="wo.js?v=phase20.15"></script>
+</body>
+
+</html>

@@ -1,0 +1,13 @@
+# 额外安全移除清单 (即使意外 commit 也从快照中删除)
+CLAUDE.local.md
+infrastructure/sso/users.yml
+infrastructure/certbot/cloudflare.ini
+infrastructure/dns/dnsmasq.conf
+.DS_Store
+
+# 私有 LICENSE (公开仓库使用 Apache 2.0，由脚本自动替换)
+LICENSE
+
+# CI 工作流 + Dependabot (公开仓库无需自动化)
+.github/workflows/
+.github/dependabot.yml

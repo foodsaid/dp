@@ -1,0 +1,1465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Digital Platform — 中小企业数字化底座</title>
+    <meta name="description"
+        content="中小企业数字化底座 · 企业 DB (SAP MSSQL + PostgreSQL) + AI + n8n + BI 四位一体 · 零 ETL · WMS + OMS 统一管理">
+    <link rel="icon" type="image/svg+xml" href="/wms/favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+
+            
+            --bg: #070c18;
+            --bg2: #0d1424;
+            --bg3: #111827;
+            --border: rgba(255, 255, 255, 0.07);
+            --blue: #00A2FF;
+            --blue-d: #005A9E;
+            --orange: #FF6D5A;
+            --green: #20C997;
+            --white: #e2e8f0;
+            --muted: #64748b;
+            --subtle: #94a3b8;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box
+        }
+
+        html {
+            scroll-behavior: smooth
+        }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--white);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* ── 通用 ── */
+        a {
+            color: inherit;
+            text-decoration: none
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 0 24px
+        }
+
+        .tag {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 1.2px;
+            text-transform: uppercase;
+            padding: 4px 10px;
+            border-radius: 20px;
+            background: rgba(0, 162, 255, .12);
+            color: var(--blue);
+            border: 1px solid rgba(0, 162, 255, .25);
+            margin-bottom: 14px;
+        }
+
+        .section-title {
+            font-size: clamp(24px, 4vw, 36px);
+            font-weight: 800;
+            margin-bottom: 12px;
+            line-height: 1.2
+        }
+
+        .section-sub {
+            color: var(--subtle);
+            font-size: 15px;
+            max-width: 540px;
+            margin: 0 auto 48px
+        }
+
+        section {
+            padding: 88px 0
+        }
+
+        /* ── 导航栏 ── */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            border-bottom: 1px solid var(--border);
+            background: rgba(7, 12, 24, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+        }
+
+        .nav-inner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 60px;
+            padding: 0 24px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .nav-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 700;
+            font-size: 15px;
+        }
+
+        .nav-logo svg {
+            width: 28px;
+            height: 28px
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 6px
+        }
+
+        .nav-links a {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--subtle);
+            padding: 6px 14px;
+            border-radius: 6px;
+            transition: all .2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--white);
+            background: rgba(255, 255, 255, .06)
+        }
+
+        .nav-cta {
+            font-size: 13px;
+            font-weight: 600;
+            padding: 7px 18px;
+            border-radius: 8px;
+            background: var(--blue);
+            color: #fff;
+            transition: all .2s;
+        }
+
+        .nav-cta:hover {
+            background: #0092e0;
+            transform: translateY(-1px)
+        }
+
+        /* ── SSO 认证按钮 ── */
+        .sso-auth {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            margin-left: 8px;
+        }
+
+        .sso-auth.visible {
+            display: flex;
+        }
+
+        .sso-user {
+            font-size: 12px;
+            color: var(--subtle);
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .sso-btn {
+            font-size: 12px;
+            font-weight: 600;
+            padding: 5px 14px;
+            border-radius: 6px;
+            transition: all .2s;
+            cursor: pointer;
+            border: none;
+        }
+
+        .sso-btn-login {
+            background: var(--green);
+            color: #fff;
+        }
+
+        .sso-btn-login:hover {
+            background: #1ab386;
+        }
+
+        .sso-btn-logout {
+            background: rgba(255, 255, 255, .08);
+            color: var(--subtle);
+            text-decoration: none;
+        }
+
+        .sso-btn-logout:hover {
+            background: rgba(255, 255, 255, .14);
+            color: var(--white);
+        }
+
+        /* ── Hero ── */
+        #hero {
+            display: flex;
+            align-items: center;
+            padding-top: 80px;
+            padding-bottom: 40px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-glow {
+            position: absolute;
+            top: -200px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 800px;
+            height: 800px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(0, 162, 255, .13) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .hero-inner {
+            text-align: center;
+            position: relative;
+            z-index: 1;
+            padding: 20px 0
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--subtle);
+            background: rgba(255, 255, 255, .04);
+            border: 1px solid var(--border);
+            padding: 5px 14px;
+            border-radius: 20px;
+            margin-bottom: 28px;
+        }
+
+        .hero-badge span {
+            color: var(--green);
+            font-weight: 600
+        }
+
+        h1.hero-title {
+            font-size: clamp(28px, 5vw, 48px);
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 14px;
+            letter-spacing: -.5px;
+        }
+
+        h1.hero-title em {
+            font-style: normal;
+            background: linear-gradient(90deg, var(--blue), var(--green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-sub {
+            font-size: clamp(13px, 1.8vw, 16px);
+            color: var(--subtle);
+            max-width: 620px;
+            margin: 0 auto 24px;
+            font-weight: 400;
+        }
+
+        .hero-ctas {
+            display: flex;
+            gap: 14px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 24px
+        }
+
+        .btn-primary {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--blue);
+            color: #fff;
+            padding: 10px 24px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 14px;
+            transition: all .2s;
+            border: 1px solid transparent;
+        }
+
+        .btn-primary:hover {
+            background: #0092e0;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 162, 255, .35)
+        }
+
+        .btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, .04);
+            color: var(--white);
+            padding: 10px 24px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 14px;
+            border: 1px solid var(--border);
+            transition: all .2s;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, .08);
+            transform: translateY(-2px)
+        }
+
+        /* 立方体 / Favicon 展示 */
+        .hero-cube {
+            width: 120px;
+            height: 120px;
+            margin: 0 auto 16px;
+            filter: drop-shadow(0 0 40px rgba(0, 162, 255, .25));
+        }
+
+        .hero-cube svg {
+            width: 100%;
+            height: 100%
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: .8
+            }
+
+            50% {
+                opacity: 1
+            }
+        }
+
+        .star {
+            animation: pulse 3s ease-in-out infinite
+        }
+
+        .cube-face {
+            transition: all .25s
+        }
+
+        .cube-face:hover {
+            filter: brightness(1.25) saturate(1.2)
+        }
+
+        /* 功能快捷入口 */
+        /* ── 快捷入口（无边框风格）── */
+        .quick-nav {
+            display: flex;
+            justify-content: center;
+            gap: 32px;
+            flex-wrap: wrap;
+            max-width: 580px;
+            margin: 0 auto;
+        }
+
+        .qn-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            transition: transform .25s;
+            text-decoration: none;
+        }
+
+        .qn-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .qn-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: box-shadow .25s, transform .25s;
+        }
+
+        .qn-card:hover .qn-icon {
+            transform: scale(1.08);
+        }
+
+        .qi-blue {
+            background: linear-gradient(135deg, #00A2FF, #005A9E);
+            box-shadow: 0 6px 20px rgba(0, 162, 255, .35);
+        }
+
+        .qi-orange {
+            background: linear-gradient(135deg, #FF6D5A, #D93826);
+            box-shadow: 0 6px 20px rgba(255, 109, 90, .35);
+        }
+
+        .qi-green {
+            background: linear-gradient(135deg, #0CA678, #20C997);
+            box-shadow: 0 6px 20px rgba(32, 201, 151, .35);
+        }
+
+        .qi-purple {
+            background: linear-gradient(135deg, #7c3aed, #a78bfa);
+            box-shadow: 0 6px 20px rgba(167, 139, 250, .35);
+        }
+
+        .qn-name {
+            font-size: 18px;
+            font-weight: 800;
+            color: var(--white);
+            letter-spacing: .3px;
+        }
+
+        .qn-desc {
+            display: none
+        }
+
+        /* ── 痛点与解决方案 ── */
+        #features {
+            background: var(--bg2);
+            text-align: center
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px
+        }
+
+        .feature-card {
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 28px 24px;
+            text-align: left;
+            transition: all .3s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            opacity: 0;
+            transition: opacity .3s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(255, 255, 255, .15)
+        }
+
+        .feature-card:hover::before {
+            opacity: 1
+        }
+
+        .fc-blue::before {
+            background: linear-gradient(90deg, var(--blue), transparent)
+        }
+
+        .fc-orange::before {
+            background: linear-gradient(90deg, var(--orange), transparent)
+        }
+
+        .fc-green::before {
+            background: linear-gradient(90deg, var(--green), transparent)
+        }
+
+        .fc-purple::before {
+            background: linear-gradient(90deg, #7c3aed, transparent)
+        }
+
+        .feature-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            margin-bottom: 16px;
+        }
+
+        .fi-blue {
+            background: rgba(0, 162, 255, .12)
+        }
+
+        .fi-orange {
+            background: rgba(255, 109, 90, .12)
+        }
+
+        .fi-green {
+            background: rgba(32, 201, 151, .12)
+        }
+
+        .fi-purple {
+            background: rgba(124, 58, 237, .12)
+        }
+
+        .feature-card h3 {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 6px
+        }
+
+        .feature-card .pain {
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 10px;
+            font-style: italic
+        }
+
+        .feature-card p {
+            font-size: 13px;
+            color: var(--subtle);
+            line-height: 1.65
+        }
+
+        /* ── 架构区 ── */
+        #architecture {
+            text-align: center
+        }
+
+        .arch-schema {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            margin: 0 auto 40px;
+            max-width: 560px;
+            text-align: left;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+        }
+
+        .arch-schema .tree-root {
+            color: var(--blue);
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px
+        }
+
+        .arch-schema .tree-line {
+            color: var(--subtle);
+            line-height: 1.9
+        }
+
+        .arch-schema .tree-leaf {
+            color: var(--white)
+        }
+
+        .arch-schema .tree-comment {
+            color: var(--muted)
+        }
+
+        .arch-note {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--green);
+            background: rgba(32, 201, 151, .08);
+            border: 1px solid rgba(32, 201, 151, .2);
+            padding: 8px 18px;
+            border-radius: 8px;
+            margin-bottom: 40px;
+        }
+
+        .container-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px
+        }
+
+        .container-card {
+            display: block;
+            text-decoration: none;
+            color: inherit;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+            transition: all .25s;
+        }
+
+        .container-card:hover {
+            border-color: rgba(0, 162, 255, .3);
+            background: rgba(0, 162, 255, .04)
+        }
+
+        .container-card .cc-icon {
+            font-size: 24px;
+            margin-bottom: 8px
+        }
+
+        .container-card .cc-name {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 3px
+        }
+
+        .container-card .cc-desc {
+            font-size: 11px;
+            color: var(--muted)
+        }
+
+        /* ── 快速启动 ── */
+        #quickstart {
+            background: var(--bg2);
+            text-align: center
+        }
+
+        .code-block {
+            background: #060a12;
+            border: 1px solid rgba(0, 162, 255, .15);
+            border-radius: 14px;
+            padding: 28px 32px;
+            text-align: left;
+            position: relative;
+            overflow: hidden;
+            max-width: 680px;
+            margin: 0 auto;
+        }
+
+        .code-block::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--blue), transparent);
+        }
+
+        .code-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, .06);
+        }
+
+        .code-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%
+        }
+
+        .code-header span {
+            margin-left: auto;
+            font-size: 11px;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace
+        }
+
+        pre {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.9;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+
+        .cm {
+            color: var(--muted)
+        }
+
+        /* 注释 */
+        .ck {
+            color: var(--blue)
+        }
+
+        /* 关键词 */
+        .cs {
+            color: var(--green)
+        }
+
+        /* 字符串/值 */
+
+        /* ── 路线图 ── */
+        #roadmap {
+            text-align: center
+        }
+
+        .timeline {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            max-width: 640px;
+            margin: 0 auto;
+            text-align: left
+        }
+
+        .tm-item {
+            display: flex;
+            gap: 20px;
+            position: relative
+        }
+
+        .tm-item:not(:last-child) .tm-line {
+            position: absolute;
+            left: 18px;
+            top: 40px;
+            bottom: 0;
+            width: 2px;
+            background: linear-gradient(180deg, rgba(255, 255, 255, .1), transparent);
+        }
+
+        .tm-icon-wrap {
+            flex-shrink: 0;
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            position: relative;
+            z-index: 1;
+        }
+
+        .tm-body {
+            padding: 6px 0 32px
+        }
+
+        .tm-tag {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: .8px;
+            text-transform: uppercase;
+            margin-bottom: 4px
+        }
+
+        .tm-tag.done {
+            color: var(--green)
+        }
+
+        .tm-tag.next {
+            color: var(--blue)
+        }
+
+        .tm-tag.soon {
+            color: var(--orange)
+        }
+
+        .tm-tag.future {
+            color: var(--muted)
+        }
+
+        .tm-body h4 {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 6px
+        }
+
+        .tm-body p {
+            font-size: 13px;
+            color: var(--subtle)
+        }
+
+        /* ── Footer ── */
+        footer {
+            background: var(--bg2);
+            border-top: 1px solid var(--border);
+            padding: 40px 0 32px;
+            text-align: center;
+        }
+
+        .footer-logo {
+            font-size: 18px;
+            font-weight: 800;
+            margin-bottom: 16px
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            margin-bottom: 24px;
+            flex-wrap: wrap
+        }
+
+        .footer-links a {
+            font-size: 13px;
+            color: var(--muted);
+            transition: color .2s
+        }
+
+        .footer-links a:hover {
+            color: var(--white)
+        }
+
+        .footer-copy {
+            font-size: 12px;
+            color: var(--muted)
+        }
+
+        .footer-divider {
+            height: 1px;
+            background: var(--border);
+            max-width: 400px;
+            margin: 24px auto
+        }
+
+        /* ── 响应式 ── */
+        @media(max-width:640px) {
+            .quick-nav {
+                grid-template-columns: repeat(2, 1fr)
+            }
+
+            .nav-links {
+                display: none
+            }
+
+            section {
+                padding: 60px 0
+            }
+
+            .code-block {
+                padding: 20px
+            }
+        }
+
+        /* ── 入场动画 ── */
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(24px)
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0)
+            }
+        }
+
+        .fade-up {
+            animation: fadeUp .6s ease both
+        }
+
+        .delay-1 {
+            animation-delay: .1s
+        }
+
+        .delay-2 {
+            animation-delay: .2s
+        }
+
+        .delay-3 {
+            animation-delay: .3s
+        }
+
+        .delay-4 {
+            animation-delay: .4s
+        }
+
+        /* ── 回到顶部按钮 ── */
+        .back-to-top {
+            position: fixed;
+            bottom: 32px;
+            right: 32px;
+            z-index: 99;
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, .04);
+            border: 1px solid var(--border);
+            color: var(--subtle);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all .3s ease;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(12px);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+
+        .back-to-top.visible {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .back-to-top:hover {
+            background: rgba(255, 255, 255, .08);
+            color: var(--white);
+            border-color: rgba(255, 255, 255, .15);
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- ══════════════════════════════════════ 导航 ══════════════════════════════════════ -->
+    <nav>
+        <div class="nav-inner">
+            <div class="nav-logo">
+                <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <linearGradient id="nb" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stop-color="#00A2FF" />
+                            <stop offset="100%" stop-color="#005A9E" />
+                        </linearGradient>
+                        <linearGradient id="nc" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#FF6D5A" />
+                            <stop offset="100%" stop-color="#D93826" />
+                        </linearGradient>
+                        <linearGradient id="ng" x1="0%" y1="100%" x2="100%" y2="0%">
+                            <stop offset="0%" stop-color="#0CA678" />
+                            <stop offset="100%" stop-color="#20C997" />
+                        </linearGradient>
+                        <filter id="gl2">
+                            <feGaussianBlur stdDeviation="3" result="b" />
+                            <feComposite in="SourceGraphic" in2="b" operator="over" />
+                        </filter>
+                    </defs>
+                    <g transform="translate(0,-6)">
+                        <path d="M128 24 L224 80 L128 136 L32 80 Z" fill="url(#nb)" opacity="0.95" />
+                    </g>
+                    <g transform="translate(-5.2,3)">
+                        <path d="M32 80 L128 136 L128 248 L32 192 Z" fill="url(#nc)" opacity="0.95" />
+                    </g>
+                    <g transform="translate(5.2,3)">
+                        <path d="M224 80 L128 136 L128 248 L224 192 Z" fill="url(#ng)" opacity="0.95" />
+                    </g>
+                    <path class="star" d="M128 100 L132 120 L152 124 L132 128 L128 148 L124 128 L104 124 L124 120 Z"
+                        fill="#fff" filter="url(#gl2)" opacity="0.9" />
+                </svg>
+                <a href="#hero"
+                    style="display:flex;align-items:center;gap:10px;color:inherit;text-decoration:none">Digital
+                    Platform</a>
+            </div>
+            <div class="nav-links">
+                <a href="#features">核心能力</a>
+                <a href="#architecture">架构</a>
+                <a href="#quickstart">快速启动</a>
+                <a href="#roadmap">路线图</a>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+                <a class="nav-cta" href="https://github.com/foodsaid/dp" target="_blank"
+                    rel="noopener">⭐ GitHub</a>
+                <!-- SSO 登录/登出 (仅 SSO 启用时可见, JS 检测 /api/auth/whoami) -->
+                <div id="sso-auth" class="sso-auth">
+                    <span id="sso-user" class="sso-user"></span>
+                    <a id="sso-login" class="sso-btn sso-btn-login" href="/auth/" style="display:none">登录</a>
+                    <a id="sso-settings" class="sso-btn sso-btn-logout" href="/auth/settings" style="display:none" title="修改密码 / 安全设置">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                            <circle cx="12" cy="10" r="2.5"/>
+                            <path d="M8.5 16c0-1.7 1.6-3 3.5-3s3.5 1.3 3.5 3"/>
+                        </svg>
+                    </a>
+                    <a id="sso-logout" class="sso-btn sso-btn-logout" href="/auth/logout" style="display:none">登出</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ══════════════════════════════════════ Hero ══════════════════════════════════════ -->
+    <section id="hero">
+        <div class="hero-glow"></div>
+        <div class="container">
+            <div class="hero-inner">
+
+
+                <!-- 立方体 Favicon -->
+                <div class="hero-cube fade-up delay-1">
+                    <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <linearGradient id="hb" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stop-color="#00A2FF" />
+                                <stop offset="100%" stop-color="#005A9E" />
+                            </linearGradient>
+                            <linearGradient id="hc" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#FF6D5A" />
+                                <stop offset="100%" stop-color="#D93826" />
+                            </linearGradient>
+                            <linearGradient id="hg" x1="0%" y1="100%" x2="100%" y2="0%">
+                                <stop offset="0%" stop-color="#0CA678" />
+                                <stop offset="100%" stop-color="#20C997" />
+                            </linearGradient>
+                            <filter id="glh">
+                                <feGaussianBlur stdDeviation="4" result="b" />
+                                <feComposite in="SourceGraphic" in2="b" operator="over" />
+                            </filter>
+                            <filter id="shh">
+                                <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#000" flood-opacity="0.4" />
+                            </filter>
+                        </defs>
+                        <g filter="url(#shh)">
+                            <g transform="translate(0,-6)">
+                                <a href="/wms/">
+                                    <path class="cube-face" d="M128 24 L224 80 L128 136 L32 80 Z" fill="url(#hb)"
+                                        opacity="0.92" />
+                                </a>
+                            </g>
+                            <g transform="translate(-5.2,3)">
+                                <a id="wf-face" href="/wms/">
+                                    <path class="cube-face" d="M32 80 L128 136 L128 248 L32 192 Z" fill="url(#hc)"
+                                        opacity="0.92" />
+                                </a>
+                            </g>
+                            <g transform="translate(5.2,3)">
+                                <a href="/BI/">
+                                    <path class="cube-face" d="M224 80 L128 136 L128 248 L224 192 Z" fill="url(#hg)"
+                                        opacity="0.92" />
+                                </a>
+                            </g>
+                        </g>
+                        <a href="/ai/">
+                            <path class="star"
+                                d="M128 100 L134 130 L164 136 L134 142 L128 172 L122 142 L92 136 L122 130 Z" fill="#fff"
+                                filter="url(#glh)" opacity="0.88" />
+                        </a>
+                    </svg>
+                </div>
+
+                <h1 class="hero-title fade-up delay-1">
+                    Digital Platform<br><em>中小企业数字化底座</em>
+                </h1>
+                <p class="hero-sub fade-up delay-2">
+                    企业 DB + AI + n8n + BI <strong style="color:var(--green)">四位一体</strong>。<br>
+                    统一 PostgreSQL 底座，零 ETL 集成，WMS · OMS · BI 数据同源同库。
+                </p>
+
+                <div class="hero-ctas fade-up delay-3">
+                    <a class="btn-primary" href="https://github.com/foodsaid/dp" target="_blank"
+                        rel="noopener">🚀 快速启动 (GitHub)</a>
+                    <a class="btn-secondary" href="#architecture">📖 架构概览</a>
+                </div>
+
+                <!-- 功能快捷进入 -->
+                <div class="quick-nav fade-up delay-4">
+                    <!-- WMS -->
+                    <a class="qn-card" href="/wms/">
+                        <div class="qn-icon qi-blue">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <path
+                                    d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                                <line x1="12" y1="22.08" x2="12" y2="12" />
+                            </svg>
+                        </div>
+                        <span class="qn-name">OWMS</span>
+                    </a>
+                    <!-- n8n -->
+                    <a class="qn-card" id="wf-link" href="/wms/">
+                        <div class="qn-icon qi-orange">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                            </svg>
+                        </div>
+                        <span class="qn-name">n8n</span>
+                    </a>
+                    <!-- BI -->
+                    <a class="qn-card" href="/BI/">
+                        <div class="qn-icon qi-green">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="18" y1="20" x2="18" y2="10" />
+                                <line x1="12" y1="20" x2="12" y2="4" />
+                                <line x1="6" y1="20" x2="6" y2="14" />
+                                <line x1="2" y1="20" x2="22" y2="20" />
+                            </svg>
+                        </div>
+                        <span class="qn-name">BI</span>
+                    </a>
+                    <!-- AI -->
+                    <a class="qn-card" href="/ai/">
+                        <div class="qn-icon qi-purple">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" />
+                            </svg>
+                        </div>
+                        <span class="qn-name">AI</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ══════════════════════════════════════ 核心能力 ══════════════════════════════════════ -->
+    <section id="features">
+        <div class="container">
+            <div class="tag">核心优势</div>
+            <h2 class="section-title">告别数据孤岛，重塑企业连接力</h2>
+            <p class="section-sub">针对 SAP B1 用户的三大核心痛点，一次性解决</p>
+            <div class="feature-grid">
+                <div class="feature-card fc-purple">
+                    <div class="feature-icon fi-purple">🛡️</div>
+                    <h3>企业级统一认证 SSO</h3>
+                    <p class="pain">❌ 多系统账号独立，权限难以收拢</p>
+                    <p>内置 <strong>Authelia SSO</strong> 认证中心，一次登录畅游 WMS、OMS、BI 与监控系统，全面收拢访问控制，保障企业数据安全。</p>
+                </div>
+                <div class="feature-card fc-blue">
+                    <div class="feature-icon fi-blue">📦</div>
+                    <h3>统一数据底座</h3>
+                    <p class="pain">❌ SAP B1 数据与外部系统割裂，同步困难</p>
+                    <p>采用 <strong>PostgreSQL</strong> 作为唯一真理源。WMS 操作数据与 BI 分析数据同源同库，彻底消除跨库同步延迟与一致性风险。</p>
+                </div>
+                <div class="feature-card fc-green">
+                    <div class="feature-icon fi-green">🤖</div>
+                    <h3>自动化与 AI 就绪</h3>
+                    <p class="pain">❌ 手工流程繁琐，AI 应用遥不可及</p>
+                    <p>内置 <strong>n8n</strong> 工作流引擎，自动化 SAP 业务流程。预留 <strong>pgvector</strong> 支持，为 AI RAG 应用做好一切准备。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ══════════════════════════════════════ 架构 ══════════════════════════════════════ -->
+    <section id="architecture">
+        <div class="container">
+            <div class="tag">技术架构</div>
+            <h2 class="section-title">极简架构，无限可能</h2>
+            <p class="section-sub">一个 PostgreSQL，托起五大核心 Schema</p>
+
+            <div class="arch-schema">
+                <div class="tree-root">🗄️ dp-db (PostgreSQL 17 + pgvector)</div>
+                <div class="tree-line">├── <span class="tree-leaf">Schema: <span
+                            style="color:#7c3aed">authelia</span></span>&nbsp;<span class="tree-comment">— SSO
+                        统一认证 (自动管理)</span></div>
+                <div class="tree-line">├── <span class="tree-leaf">Schema: <span
+                            style="color:var(--orange)">wms</span></span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tree-comment">— WMS
+                        操作数据
+                        (12表 + 4视图)</span></div>
+                <div class="tree-line">├── <span class="tree-leaf">Schema: <span
+                            style="color:#FF9F43">oms</span></span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tree-comment">— OMS 订单管理
+                        (4表 + 2视图)</span></div>
+                <div class="tree-line">├── <span class="tree-leaf">Schema: <span
+                            style="color:var(--blue)">wf</span></span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tree-comment">— n8n
+                        工作流元数据 (自动管理)</span></div>
+                <div class="tree-line">├── <span class="tree-leaf">Schema: <span
+                            style="color:var(--green)">bi</span></span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tree-comment">—
+                        BI 引擎元数据 (自动管理)</span></div>
+                <div class="tree-line">└── <span class="tree-leaf">Schema: <span
+                            style="color:#a78bfa">ai</span></span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tree-comment">—
+                        AI 向量数据 (pgvector, 预留)</span></div>
+            </div>
+
+            <div class="arch-note" style="margin-bottom:40px">
+                ✅&nbsp; <strong>备份一次 = 全平台数据安全</strong>
+            </div>
+
+            <div class="container-grid">
+                <a class="container-card" href="/auth/">
+                    <div class="cc-icon">🛡️</div>
+                    <div class="cc-name">Authelia</div>
+                    <div class="cc-desc">SSO 统一认证</div>
+                </a>
+                <a class="container-card" href="/grafana/">
+                    <div class="cc-icon">📈</div>
+                    <div class="cc-name">Grafana</div>
+                    <div class="cc-desc">全栈可观测性监控</div>
+                </a>
+                <a class="container-card" id="owms-link-grid" href="/wms/">
+                    <div class="cc-icon">📦</div>
+                    <div class="cc-name">OWMS</div>
+                    <div class="cc-desc">WMS+OMS 前端应用</div>
+                </a>
+                <div class="container-card">
+                    <div class="cc-icon">🐘</div>
+                    <div class="cc-name">PostgreSQL</div>
+                    <div class="cc-desc">统一数据底座</div>
+                </div>
+                <a class="container-card" id="wf-link-grid" href="/wms/">
+                    <div class="cc-icon">🔄</div>
+                    <div class="cc-name">n8n</div>
+                    <div class="cc-desc">工作流引擎 (30+)</div>
+                </a>
+                <a class="container-card" href="/BI/">
+                    <div class="cc-icon">📊</div>
+                    <div class="cc-name">BI</div>
+                    <div class="cc-desc">引擎数据可视化</div>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- ══════════════════════════════════════ 快速启动 ══════════════════════════════════════ -->
+    <section id="quickstart">
+        <div class="container">
+            <div class="tag">开发者体验</div>
+            <h2 class="section-title">5 分钟，从零构建您的数字平台</h2>
+            <p class="section-sub">Docker Compose 一键拉起，全平台就绪</p>
+
+            <div class="code-block">
+                <div class="code-header">
+                    <div class="code-dot" style="background:#ff5f57"></div>
+                    <div class="code-dot" style="background:#ffbd2e"></div>
+                    <div class="code-dot" style="background:#28c840"></div>
+                    <span>bash</span>
+                </div>
+                <pre><span class="cm"># 1. 克隆仓库</span>
+<span class="ck">git</span> clone https://github.com/foodsaid/dp
+<span class="ck">cd</span> Digital-Platform
+
+<span class="cm"># 2. 配置环境 (⚠️ 必须设置所有密码字段!)</span>
+<span class="ck">cp</span> .env.example .env
+
+<span class="cm"># 3. 一键启动 (自动检测平台 + 创建网络 + 权限预检)</span>
+<span class="ck">bash</span> scripts/dev-up.sh
+
+<span class="cm"># 4. 访问平台 🎉</span>
+<span class="cs">WMS      →  http://localhost:&lt;DP_GATEWAY_PORT&gt;/wms/</span>
+<span class="cs">OMS      →  http://localhost:&lt;DP_GATEWAY_PORT&gt;/wms/oms.html</span>
+<span class="cs">BI       →  http://localhost:&lt;DP_GATEWAY_PORT&gt;/bi</span>
+<span class="cs">Workflow →  http://localhost:&lt;DP_WF_PORT&gt;</span></pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- ══════════════════════════════════════ 路线图 ══════════════════════════════════════ -->
+    <section id="roadmap">
+        <div class="container">
+            <div class="tag">演进路线</div>
+            <h2 class="section-title">现在加入，是最佳时机</h2>
+            <p class="section-sub">每个版本都更进一步</p>
+
+            <div class="timeline">
+                <div class="tm-item">
+                    <div class="tm-line"></div>
+                    <div class="tm-icon-wrap" style="border-color:rgba(32,201,151,.4);background:rgba(32,201,151,.06)">✅
+                    </div>
+                    <div class="tm-body">
+                        <div class="tm-tag done">v0.1 ~ v0.7 · Released</div>
+                        <h4>数字底座全栈落地</h4>
+                        <p>WMS 7模块扫码执行 + OMS 订单拆分调度 + BI 可视化引擎 + n8n Queue 分布式工作流 + Authelia SSO 统一认证 + Prometheus/Grafana/Loki 全栈可观测 + RLS 行级安全 14表策略 + OMS 分批增量同步。</p>
+                    </div>
+                </div>
+                <div class="tm-item">
+                    <div class="tm-line"></div>
+                <div class="tm-item">
+                    <div class="tm-line"></div>
+                    <div class="tm-icon-wrap" style="border-color:rgba(32,201,151,.4);background:rgba(32,201,151,.06)">✅
+                    </div>
+                    <div class="tm-body">
+                        <div class="tm-tag done">v0.8.1 · Current</div>
+                        <h4>WMS 解耦 SAP 直连 + OMS 同步优化</h4>
+                        <p>WMS 单据查询全面切换至 PostgreSQL OMS 本地数据，消除 SAP MSSQL 实时依赖，OMS 同步加固（领空保护 + 防旧覆盖 + 行数校验）。v0.8.1: 完整 SAP 同步（item_type 字段）+ Switch 路由 + LEFT JOIN + 智能跳过优化。</p>
+                    </div>
+                </div>
+                    <div class="tm-icon-wrap" style="border-color:rgba(0,162,255,.4);background:rgba(0,162,255,.06)">
+                        🚀</div>
+                    <div class="tm-body">
+                        <div class="tm-tag next">v1.0 · Target</div>
+                        <h4>生产加固</h4>
+                        <p>API 网关限流 + 前端 Vite 构建 + Service Layer 定时回写 SAP。</p>
+                    </div>
+                </div>
+                <div class="tm-item">
+                    <div class="tm-icon-wrap"
+                        style="border-color:rgba(167,139,250,.4);background:rgba(167,139,250,.06)">🤖</div>
+                    <div class="tm-body">
+                        <div class="tm-tag future">Future</div>
+                        <h4>智能化演进</h4>
+                        <p>工作流失败自愈 + AI (RAG + pgvector) 智能洞察 + 库存异动异常检测 + 自然语言查询 BI。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ══════════════════════════════════════ Footer ══════════════════════════════════════ -->
+    <footer>
+        <div class="container">
+            <div class="footer-logo">Digital Platform</div>
+            <div class="footer-links">
+                <a href="https://github.com/foodsaid/dp" target="_blank" rel="noopener">GitHub</a>
+                <a href="/wms/">WMS</a>
+                <a id="footer-wf" href="/wms/">n8n</a>
+                <a href="/BI/">BI</a>
+                <a href="/ai/">AI</a>
+            </div>
+            <div class="footer-divider"></div>
+            <div class="footer-links" style="margin-bottom:12px">
+                <a href="/privacy">Privacy Policy</a>
+                <a href="/terms">Terms of Service</a>
+            </div>
+            <div class="footer-copy">© 2026 Foodsaid</div>
+        </div>
+    </footer>
+
+    <!-- ══════════════════════════════════════ 回到顶部 ══════════════════════════════════════ -->
+    <button class="back-to-top" id="backToTop" title="回到顶部" onclick="window.scrollTo({top:0,behavior:'smooth'})">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="18 15 12 9 6 15"></polyline>
+        </svg>
+    </button>
+
+    <script>
+        // ── n8n Workflow URL 动态路由（保留原逻辑）──
+        var wfLink = document.getElementById('wf-link');
+        var wfFace = document.getElementById('wf-face');
+        var footerWf = document.getElementById('footer-wf');
+        var wfLinkGrid = document.getElementById('wf-link-grid');
+        var port = location.port;
+        var wfUrl = '';
+        if (!port || port === '80' || port === '443') {
+            // 域名模式: 替换首段子域名为 wf
+            // app.example.com → wf.example.com (3段: 替换首段)
+            // example.com → wf.example.com (2段: 前缀追加)
+            var host = location.hostname;
+            if (host) {
+                var parts = host.split('.');
+                if (parts.length > 2) {
+                    wfUrl = location.protocol + '//wf.' + parts.slice(1).join('.') + '/';
+                } else {
+                    wfUrl = location.protocol + '//wf.' + host + '/';
+                }
+            }
+        } else {
+            // 本地/端口模式: 直接用 127.0.0.1:15678 (http 无 s)
+            wfUrl = 'http://127.0.0.1:15678/';
+        }
+        if (wfUrl) {
+            wfLink.href = wfUrl;
+            wfFace.setAttribute('href', wfUrl);
+            footerWf.href = wfUrl;
+            if (wfLinkGrid) wfLinkGrid.href = wfUrl;
+        }
+
+        // ── IntersectionObserver 滚动入场动画 ──
+        var observer = new IntersectionObserver(function (entries) {
+            entries.forEach(function (e) {
+                if (e.isIntersecting) {
+                    e.target.style.opacity = '1';
+                    e.target.style.transform = 'translateY(0)';
+                }
+            });
+        }, { threshold: 0.1 });
+
+        document.querySelectorAll('.feature-card,.container-card,.tm-item').forEach(function (el) {
+            el.style.opacity = '0';
+            el.style.transform = 'translateY(20px)';
+            el.style.transition = 'opacity .5s ease, transform .5s ease';
+            observer.observe(el);
+        });
+
+        // ── 回到顶部按钮 显示/隐藏 ──
+        var backToTopBtn = document.getElementById('backToTop');
+        window.addEventListener('scroll', function () {
+            if (window.scrollY > window.innerHeight) {
+                backToTopBtn.classList.add('visible');
+            } else {
+                backToTopBtn.classList.remove('visible');
+            }
+        });
+
+        // ── SSO 登录状态检测 + 智能重定向 ──
+        // 调用 /api/auth/whoami 检测 SSO 是否启用及登录状态
+        // 200 = 已登录 (显示用户名 + 登出), 401/403 = 未登录 (显示登录按钮)
+        // 502/503 = SSO 未运行 (不显示任何按钮)
+        //
+        // 重定向逻辑:
+        //   用户从 WMS/BI 登出时带 ?rd=/wms/ 参数到 landing
+        //   已登录 → 自动跳转回 rd 目标 (auth_request 会再次校验权限)
+        //   未登录 → 登录按钮带 rd 参数, 登录后自动跳回原页面
+        (function () {
+            var authEl = document.getElementById('sso-auth');
+            var userEl = document.getElementById('sso-user');
+            var loginEl = document.getElementById('sso-login');
+            var logoutEl = document.getElementById('sso-logout');
+            var settingsEl = document.getElementById('sso-settings');
+
+            // 从 URL 提取 rd (redirect) 和 denied 参数
+            var params = new URLSearchParams(window.location.search);
+            var rd = params.get('rd');
+            var denied = params.get('denied') === '1';
+            // 安全校验: 只允许站内相对路径 (防止 open redirect)
+            if (rd && (rd.charAt(0) !== '/' || rd.indexOf('//') === 0)) {
+                rd = null;
+            }
+
+            // 清理 URL 参数 (denied/rd 只用一次, 不污染浏览器历史)
+            if (denied || rd) {
+                var cleanUrl = window.location.origin + window.location.pathname;
+                window.history.replaceState(null, '', cleanUrl);
+            }
+
+            fetch('/api/auth/whoami', { credentials: 'same-origin' })
+                .then(function (res) {
+                    if (res.status === 200) {
+                        return res.json().then(function (data) {
+                            var displayName = data.display_name || data.username || '';
+                            if (denied) {
+                                // 已登录但无权限: 显示提示, 不自动跳转 (防循环)
+                                authEl.classList.add('visible');
+                                userEl.textContent = displayName + ' — 无权访问该页面';
+                                userEl.style.color = '#ff6b6b';
+                                logoutEl.style.display = 'inline-block';
+                                settingsEl.style.display = 'inline-block';
+                                return;
+                            }
+                            if (rd) {
+                                // 已登录+有 rd (非 denied): 刚完成登录, 自动跳回原页面
+                                window.location.href = rd;
+                                return;
+                            }
+                            // 无 rd: 正常显示用户名 + 登出/设置按钮 + Account 卡片
+                            authEl.classList.add('visible');
+                            userEl.textContent = displayName;
+                            logoutEl.style.display = 'inline-block';
+                            settingsEl.style.display = 'inline-block';
+                        });
+                    } else if (res.status === 401 || res.status === 403) {
+                        // 未登录: 登录按钮始终带 rd 参数, 认证完成后自动跳回
+                        authEl.classList.add('visible');
+                        var target = window.location.origin + (rd || '/');
+                        loginEl.href = '/auth/?rd=' + encodeURIComponent(target);
+                        loginEl.style.display = 'inline-block';
+                    }
+                    // 其他状态 (502/503): SSO 未运行, 不显示按钮
+                })
+                .catch(function () {
+                    // 网络错误: 不显示按钮 (SSO 不可用)
+                });
+        })();
+    </script>
+</body>
+
+</html>

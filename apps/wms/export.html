@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据导出 - WMS</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="shared.css?v=phase20.15">
+    <link rel="stylesheet" href="print.css?v=phase20.15">
+</head>
+<body>
+    <div id="loader" class="loader"><div class="spinner"></div></div>
+
+    <div class="container">
+        <div class="header">
+            <div class="header-nav">
+                <a href="index.html" class="back-link no-print">&#8592;</a>
+                <div>
+                    <h1 data-i18n="export.title" data-short-title="Export">WMS数据导出</h1>
+                    <p data-i18n="export.subtitle">导出WMS单据数据，支持按类型/状态/日期筛选</p>
+                </div>
+                <button class="btn-logout no-print" onclick="logout()" data-i18n="logout">退出</button>
+            </div>
+        </div>
+
+        <!-- 筛选条件 -->
+        <div class="card no-print">
+            <div class="card-title" data-i18n="export.filter">筛选条件</div>
+            <div class="info-grid">
+                <div class="form-group">
+                    <label class="form-label" data-i18n="export.doc_type">单据类型</label>
+                    <select id="filterType" class="form-input form-select">
+                        <option value="" data-i18n="export.type_all">全部</option>
+                        <option value="SO" data-i18n="export.type_so">销售订单 (SO)</option>
+                        <option value="WO" data-i18n="export.type_wo">生产订单 (WO)</option>
+                        <option value="PO" data-i18n="export.type_po">采购订单 (PO)</option>
+                        <option value="TR" data-i18n="export.type_tr">调拨申请 (TR)</option>
+                        <option value="IC" data-i18n="export.type_ic">库存盘点 (IC)</option>
+                        <option value="LM" data-i18n="export.type_lm">库位移动 (LM)</option>
+                        <option value="PI" data-i18n="export.type_pi">生产发货 (PI)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="field.status">状态</label>
+                    <select id="filterStatus" class="form-input form-select">
+                        <option value="" data-i18n="export.status_all">All Status</option>
+                        <option value="in_progress" data-i18n="export.status_progress">执行中 (In Progress)</option>
+                        <option value="pending_export" data-i18n="export.status_pending">待导出 (Pending Export)</option>
+                        <option value="exported" data-i18n="export.status_exported">已导出 (Exported)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="export.date_from">开始日期</label>
+                    <input type="date" id="filterDateFrom" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="export.date_to">结束日期</label>
+                    <input type="date" id="filterDateTo" class="form-input">
+                </div>
+            </div>
+            <div class="btn-group mt-md">
+                <button class="btn btn-primary" onclick="loadDocuments()" data-i18n="export.query">查询</button>
+                <button class="btn btn-success" onclick="exportCSV()" data-i18n="export.csv">导出CSV</button>
+                <button class="btn btn-outline" onclick="markExported()" data-i18n="export.mark">标记已导出</button>
+            </div>
+        </div>
+
+        <!-- 结果表格 -->
+        <div class="card">
+            <div class="card-title" data-i18n="export.doc_list">单据列表 (<span id="resultCount">0</span> 条)</div>
+            <div class="table-container">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" id="selectAll" onchange="toggleAll()"></th>
+                            <th data-i18n="export.doc_type">类型</th>
+                            <th data-i18n="field.doc_num">单号</th>
+                            <th data-i18n="field.sap_doc_num">SAP单号</th>
+                            <th data-i18n="field.warehouse">仓库</th>
+                            <th data-i18n="field.line_count">行数</th>
+                            <th data-i18n="field.total_qty">总数量</th>
+                            <th data-i18n="field.status">状态</th>
+                            <th data-i18n="field.date">日期</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultBody">
+                        <tr><td colspan="9" class="no-data" data-i18n="export.load_hint">请点击"查询"加载数据</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 导出统计 -->
+        <div class="card hidden" id="statsCard">
+            <div class="card-title" data-i18n="export.stats">导出统计</div>
+            <div class="info-grid" id="statsGrid">
+            </div>
+        </div>
+        <div class="version-footer no-print" data-i18n="app.version">WMS @Foodsaid 维护</div>
+    </div>
+
+    <script defer src="vendor/JsBarcode.all.min.js"></script>
+    <script defer src="vendor/qrcode.min.js"></script>
+    <script src="env.js"></script>
+    <script src="shared.js?v=phase20.15"></script>
+    <script src="lang.js?v=phase20.15"></script>
+    <script src="export.js?v=phase20.15"></script>
+</body>
+</html>

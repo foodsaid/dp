@@ -1,0 +1,815 @@
+# =============================================================================
+# DP v0.1 — Digital Platform · 基础 Docker Compose
+# 8 核心容器 + 10 监控容器 (profile: monitoring) · 统一 PostgreSQL 17 · 双 Redis · nginx 网关
+# =============================================================================
+# 用法:
+#   开发: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   生产: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# =============================================================================
+
+name: dp
+
+services:
+
+  # ===========================================================================
+  # 1. dp-db — 统一数据库 (PostgreSQL 17 + pgvector)
+  #    4 Schema: wms / wf / bi / ai
+  # ===========================================================================
+  dp-db:
+    image: pgvector/pgvector:pg17
+    container_name: dp-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DP_DB_NAME:-dp}
+      POSTGRES_USER: ${DP_DB_USER:-dp_app}
+      POSTGRES_PASSWORD: ${DP_DB_PASSWORD}
+      TZ: ${SYSTEM_TIMEZONE:-UTC}
+      # 传递给 06_monitoring_user.sh (监控账号初始化)
+      DP_MONITOR_PASSWORD: ${DP_MONITOR_PASSWORD:-}
+      # DEPRECATED: WMS 管理员已由 SSO 替代 (v0.3.1+), 04_wms_seed.sh 仅旧环境首次初始化需要
+      DP_WMS_ADMIN_USERNAME: ${DP_WMS_ADMIN_USERNAME:-}
+      DP_WMS_ADMIN_PASSWORD: ${DP_WMS_ADMIN_PASSWORD:-}
+      DP_COMPANY_CODE: ${DP_COMPANY_CODE:-DEFAULT}
+      # 传递给 07_sso_schema.sh 等 init 脚本 (需要知道业务用户名)
+      DP_DB_USER: ${DP_DB_USER:-dp_app}
+      # 传递给 11_rls_roles.sh (RLS 角色创建, 留空跳过)
+      DP_DB_RLS_PASSWORD: ${DP_DB_RLS_PASSWORD:-}
+      DP_DB_BI_PASSWORD: ${DP_DB_BI_PASSWORD:-}
+      # --- 生产环境性能调优 (取消注释并按实际 RAM 配置) ---
+      # 以下通过 postgresql.conf 挂载或 ALTER SYSTEM 设置:
+      # shared_buffers = 25% RAM (如 4G 机器用 1G)
+      # work_mem = 16MB
+      # effective_cache_size = 75% RAM
+      # maintenance_work_mem = 256MB
+      # POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - ${DP_DATA_DIR:?DP_DATA_DIR 必须设置}/pgdata:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - n8network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DP_DB_USER:-dp_app} -d ${DP_DB_NAME:-dp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ===========================================================================
+  # 2. dp-cache-wf — 工作流队列 Redis
+  #    db:0 = Bull 队列 (n8n), db:1 = WMS 会话
+  # ===========================================================================
+  dp-cache-wf:
+    image: redis:7.4-alpine
+    container_name: dp-cache-wf
+    restart: unless-stopped
+    command: >
+      redis-server
+      /usr/local/etc/redis/redis.conf
+      --requirepass ${DP_REDIS_WF_PASSWORD}
+    volumes:
+      - ${DP_DATA_DIR}/redis-wf:/data
+      - ./infrastructure/redis/wf.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - n8network
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$DP_REDIS_WF_PASSWORD redis-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # 3. dp-cache-bi — BI 缓存 Redis
+  #    db:0 = BI 缓存, db:1 = Celery Broker, db:2 = AI 预留
+  # ===========================================================================
+  dp-cache-bi:
+    image: redis:7.4-alpine
+    container_name: dp-cache-bi
+    restart: unless-stopped
+    command: >
+      redis-server
+      /usr/local/etc/redis/redis.conf
+      --requirepass ${DP_REDIS_BI_PASSWORD}
+    volumes:
+      - ${DP_DATA_DIR}/redis-bi:/data
+      - ./infrastructure/redis/bi.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - n8network
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$DP_REDIS_BI_PASSWORD redis-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # 4. dp-wms-web — WMS 前端 (nginx 静态文件服务)
+  # ===========================================================================
+  dp-wms-web:
+    build:
+      context: .
+      dockerfile: apps/wms/docker/Dockerfile
+    container_name: dp-wms-web
+    restart: unless-stopped
+    environment:
+      ENV_NAME: ${ENV_NAME:-development}
+      API_BASE_URL: ${API_BASE_URL:-}
+      QR_SERVICE_URL: ${QR_SERVICE_URL:-}
+      APP_BASE_URL: ${APP_BASE_URL:-}
+      SYSTEM_TIMEZONE: ${SYSTEM_TIMEZONE:-UTC}
+      SOUND_ENABLED: ${SOUND_ENABLED:-true}
+      AUTO_FOCUS_DELAY: ${AUTO_FOCUS_DELAY:-100}
+      DEBUG: ${DEBUG:-true}
+      WMS_CONFIG: ${WMS_CONFIG:-}
+      # SSO 开关 (env.js 注入, 前端判断是否走 Authelia 统一登录)
+      DP_SSO_ENABLED: ${DP_SSO_ENABLED:-false}
+    networks:
+      - n8network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # 5. dp-wf — 工作流引擎 (n8n, PostgreSQL 后端)
+  # ===========================================================================
+  dp-wf:
+    image: n8nio/n8n:stable
+    container_name: dp-wf
+    restart: unless-stopped
+    environment:
+      # 基本配置
+      N8N_HOST: ${N8N_HOST:-0.0.0.0}
+      # 容器内部固定 5678，宿主机端口由 DP_WF_PORT 控制 (在 dev.yml 映射)
+      N8N_PORT: 5678
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      # 信任反向代理 (网关转发 webhook 时需要)
+      N8N_TRUST_PROXY: "true"
+      # Webhook URL: n8n 编辑器 "Production URL" 前缀
+      # 由 --env-file 按环境注入:
+      #   .env.dev:  http://localhost:5678
+      #   .env.uat:  https://wf.example.com
+      #   .env.prod: https://wf.company.com
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-${SYSTEM_TIMEZONE:-UTC}}
+      TZ: ${SYSTEM_TIMEZONE:-UTC}
+      # 编辑器基础 URL (控制 JS/CSS base href + Test URL 前缀)
+      # 不使用 N8N_PATH 子路径 (官方 BUG: n8n-io/n8n #18596 #19635)
+      #   .env.dev:  http://localhost:5678/
+      #   .env.uat:  https://wf.example.com/
+      #   .env.prod: https://wf.company.com/
+      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL:-http://localhost:5678/}
+      # PostgreSQL 元数据后端
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: dp-db
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${DP_DB_NAME:-dp}
+      DB_POSTGRESDB_USER: ${DP_DB_USER:-dp_app}
+      DB_POSTGRESDB_PASSWORD: ${DP_DB_PASSWORD}
+      DB_POSTGRESDB_SCHEMA: wf
+      DB_POSTGRESDB_SSL_ENABLED: "true"
+      DB_POSTGRESDB_SSL_CA: ""
+      DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED: "false"
+      # 执行模式: queue=分布式 (v0.4+, main 仅路由+入队, worker 执行), regular=单进程 (v0.1-v0.3)
+      EXECUTIONS_MODE: queue
+      # Redis Bull 队列 (queue 模式: main 入队, worker 消费)
+      QUEUE_BULL_REDIS_HOST: dp-cache-wf
+      QUEUE_BULL_REDIS_PORT: 6379
+      QUEUE_BULL_REDIS_PASSWORD: ${DP_REDIS_WF_PASSWORD}
+      QUEUE_BULL_REDIS_DB: 0
+      # Queue 模式: 手动执行也下发给 worker (编辑器更流畅)
+      OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS: "true"
+      # Queue 模式: main 入队并发限制 (防止 webhook 洪峰打满 Redis)
+      N8N_CONCURRENCY_PRODUCTION_LIMIT: ${N8N_CONCURRENCY_PRODUCTION_LIMIT:-5}
+      # Queue 指标 (Prometheus 采集队列深度)
+      N8N_METRICS_INCLUDE_QUEUE_METRICS: "true"
+      N8N_METRICS_QUEUE_METRICS_INTERVAL: "30"
+      # 执行数据修剪 (queue 模式产生大量执行记录, 必须开启防止 PG 膨胀)
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-168}
+      EXECUTIONS_DATA_PRUNE_MAX_COUNT: ${EXECUTIONS_DATA_PRUNE_MAX_COUNT:-10000}
+      # 安全 — 凭据加密密钥 (必须! 不允许为空，否则容器重建后凭据全废)
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      # Public API 密钥 (用于 API 方式同步工作流)
+      N8N_API_KEY: ${N8N_API_KEY:-}
+      # ⚠️ n8n 2.x 使用内置用户管理 (首次访问编辑器创建 owner)
+      # 运行参数 (参考生产经验)
+      N8N_EXECUTIONS_TIMEOUT: ${N8N_EXECUTIONS_TIMEOUT:-1800}
+      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-false}
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: ${N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS:-false}
+      N8N_RESTRICT_FILE_ACCESS_TO: ${N8N_RESTRICT_FILE_ACCESS_TO:-/data}
+      # Node.js 堆内存上限 (匹配 prod 1GB 容器限制的 75%)
+      NODE_OPTIONS: "--max-old-space-size=768"
+      # n8n 2.x 默认封锁 $env 访问，必须显式开启 (自托管单租户安全可接受)
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      # 关闭遥测 (避免 CORS 刷屏 + 无需向 n8n 公司发送匿名统计)
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_DIAGNOSTICS_FRONTEND_ENABLED: "false"
+      # Prometheus 指标 (暴露内网 /metrics, 不同于 DIAGNOSTICS 外发遥测)
+      N8N_METRICS: ${N8N_METRICS:-true}
+      N8N_METRICS_INCLUDE_DEFAULT_METRICS: "true"
+      N8N_METRICS_INCLUDE_WORKFLOW_ID_LABEL: "true"
+      # 平台变量 (工作流可通过 $env 访问)
+      DP_COMPANY_CODE: ${DP_COMPANY_CODE:-DEFAULT}
+      DP_COMPANY_NAME: ${DP_COMPANY_NAME:-Digital Platform}
+      DP_OMS_SYNC_START_DATE: ${DP_OMS_SYNC_START_DATE:-20240101}
+    volumes:
+      - ${DP_DATA_DIR}/n8n:/home/node/.n8n
+      # n8n 文件节点 (Read/Write from Disk) 的数据目录
+      # 可通过 DP_N8N_DATA_DIR 指向已有目录 (如旧 n8n 的 /mnt/d/Data/N8N)
+      - ${DP_N8N_DATA_DIR:-./data/n8n-data}:/data
+    networks:
+      - n8network
+    depends_on:
+      dp-db:
+        condition: service_healthy
+      dp-cache-wf:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:5678/healthz || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ===========================================================================
+  # 5b. dp-wf-worker — n8n 工作流执行 Worker (queue 模式, v0.4+)
+  # ===========================================================================
+  # Queue 模式下 main (dp-wf) 仅路由+入队，worker 消费 Redis Bull 队列执行工作流
+  # ⚠️ 若所有 worker 宕机，任务在 Redis 无限堆积 (main 不会自动降级执行)
+  # ===========================================================================
+  dp-wf-worker:
+    image: n8nio/n8n:stable
+    container_name: dp-wf-worker
+    restart: unless-stopped
+    # ⚠️ 并发必须用 CLI flag，env var N8N_WORKER_CONCURRENCY 无效
+    command: ["worker", "--concurrency=${N8N_WORKER_CONCURRENCY:-5}"]
+    environment:
+      EXECUTIONS_MODE: queue
+      # Redis Bull 队列 (与 dp-wf 一致)
+      QUEUE_BULL_REDIS_HOST: dp-cache-wf
+      QUEUE_BULL_REDIS_PORT: 6379
+      QUEUE_BULL_REDIS_PASSWORD: ${DP_REDIS_WF_PASSWORD}
+      QUEUE_BULL_REDIS_DB: 0
+      # PostgreSQL (与 dp-wf 完全一致)
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: dp-db
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${DP_DB_NAME:-dp}
+      DB_POSTGRESDB_USER: ${DP_DB_USER:-dp_app}
+      DB_POSTGRESDB_PASSWORD: ${DP_DB_PASSWORD}
+      DB_POSTGRESDB_SCHEMA: wf
+      DB_POSTGRESDB_SSL_ENABLED: "true"
+      DB_POSTGRESDB_SSL_CA: ""
+      DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED: "false"
+      # 加密密钥 — 必须与 dp-wf 完全一致，否则凭据解密静默失败
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      # 时区 (必须与 dp-wf 一字不差，否则 Cron 节点行为诡异)
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-${SYSTEM_TIMEZONE:-UTC}}
+      TZ: ${SYSTEM_TIMEZONE:-UTC}
+      # 运行参数
+      N8N_EXECUTIONS_TIMEOUT: ${N8N_EXECUTIONS_TIMEOUT:-1800}
+      NODE_OPTIONS: "--max-old-space-size=1536"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_DIAGNOSTICS_FRONTEND_ENABLED: "false"
+      # Prometheus 指标
+      N8N_METRICS: ${N8N_METRICS:-true}
+      N8N_METRICS_INCLUDE_DEFAULT_METRICS: "true"
+      N8N_METRICS_INCLUDE_WORKFLOW_ID_LABEL: "true"
+      N8N_METRICS_INCLUDE_QUEUE_METRICS: "true"
+      # Worker 健康检查端口 (v1.97+ 可能不生效, issue #16900)
+      QUEUE_HEALTH_CHECK_ACTIVE: "true"
+      QUEUE_HEALTH_CHECK_PORT: 5678
+      # 平台变量 (工作流可通过 $env 访问)
+      DP_COMPANY_CODE: ${DP_COMPANY_CODE:-DEFAULT}
+      DP_COMPANY_NAME: ${DP_COMPANY_NAME:-Digital Platform}
+      DP_OMS_SYNC_START_DATE: ${DP_OMS_SYNC_START_DATE:-20240101}
+      # 文件节点访问限制 — 必须与 dp-wf 一致，否则 Write/Read Binary File 节点被拒绝
+      N8N_RESTRICT_FILE_ACCESS_TO: ${N8N_RESTRICT_FILE_ACCESS_TO:-/data}
+    volumes:
+      # ⚠️ 不挂载 .n8n 目录 — Main 和 Worker 共享会导致 SQLite 锁死
+      # Worker 在容器内部自动生成独立的 ~/.n8n 缓存目录
+      # 仅共享 /data (文件节点数据, 如 Read/Write from Disk)
+      - ${DP_N8N_DATA_DIR:-./data/n8n-data}:/data
+    networks:
+      - n8network
+    depends_on:
+      # ⚠️ 不依赖 dp-wf — Worker 只需 Redis + DB
+      # dp-wf 先启动完成 PG schema migration，Worker 再介入
+      dp-db:
+        condition: service_healthy
+      dp-cache-wf:
+        condition: service_healthy
+    healthcheck:
+      # n8n v1.97+ worker 可能不监听 HTTP 端口 (issue #16900)
+      # 使用进程级检查作为可靠方案
+      test: ["CMD-SHELL", "pgrep -f 'n8n worker' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ===========================================================================
+  # 6. dp-bi — BI 引擎 (数据可视化 + pyodbc + pymssql)
+  # ===========================================================================
+  dp-bi:
+    build:
+      context: .
+      dockerfile: apps/bi/Dockerfile
+    container_name: dp-bi
+    restart: unless-stopped
+    environment:
+      # BI 密钥
+      SUPERSET_SECRET_KEY: ${DP_BI_SECRET_KEY}
+      # PostgreSQL 元数据后端 (Schema: bi)
+      DP_DB_HOST: dp-db
+      DP_DB_PORT: 5432
+      DP_DB_NAME: ${DP_DB_NAME:-dp}
+      DP_DB_USER: ${DP_DB_USER:-dp_app}
+      DP_DB_PASSWORD: ${DP_DB_PASSWORD}
+      # Redis 缓存
+      DP_REDIS_BI_HOST: dp-cache-bi
+      DP_REDIS_BI_PORT: 6379
+      DP_REDIS_BI_PASSWORD: ${DP_REDIS_BI_PASSWORD}
+      # 管理员
+      SUPERSET_ADMIN_USERNAME: ${DP_BI_ADMIN_USERNAME:-admin}
+      SUPERSET_ADMIN_PASSWORD: ${DP_BI_ADMIN_PASSWORD}
+      SUPERSET_ADMIN_EMAIL: ${DP_BI_ADMIN_EMAIL:-admin@example.com}
+      # SSO (Authelia Remote-User header → FAB AUTH_REMOTE_USER)
+      DP_SSO_ENABLED: ${DP_SSO_ENABLED:-false}
+      # 时区
+      TZ: ${SYSTEM_TIMEZONE:-UTC}
+    volumes:
+      # 开发期间挂载配置文件，修改后 restart 即生效 (无需 rebuild)
+      - ./apps/bi/superset_config.py:/app/pythonpath/superset_config.py:ro
+    networks:
+      - n8network
+    depends_on:
+      dp-db:
+        condition: service_healthy
+      dp-cache-bi:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8088/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ===========================================================================
+  # 7. dp-gateway — 统一网关 (nginx, 多路路由 + SSO auth_request)
+  # ===========================================================================
+  dp-gateway:
+    image: nginx:stable-alpine
+    container_name: dp-gateway
+    restart: unless-stopped
+    environment:
+      DP_WMS_TEST_DOMAIN: ${DP_WMS_TEST_DOMAIN:-}
+      DP_WF_PORT: ${DP_WF_PORT:-5678}
+      DP_CONTACT_EMAIL: ${DP_CONTACT_EMAIL:-admin@example.com}
+      DP_SSO_ENABLED: ${DP_SSO_ENABLED:-false}
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infrastructure/nginx/conf.d:/etc/nginx/conf.d:ro
+      # 安全响应头 include 片段 (解决 location 级 add_header 继承丢失)
+      - ./infrastructure/nginx/security-headers.conf:/etc/nginx/security-headers.conf:ro
+      - ./infrastructure/nginx/security-headers-wf.conf:/etc/nginx/security-headers-wf.conf:ro
+      # landing 源文件只读挂载，运行时脚本注入端口后写入 tmpfs
+      - ./infrastructure/nginx/landing:/usr/share/nginx/landing-src:ro
+      # WMS 测试网关: 模板 + 条件化生成脚本
+      - ./infrastructure/nginx/wms-test-gateway.conf.template:/etc/nginx/wms-test-gateway.conf.template:ro
+      - ./infrastructure/nginx/25-wms-test-envsubst.sh:/docker-entrypoint.d/25-wms-test-envsubst.sh:ro
+      # landing 端口注入脚本
+      - ./infrastructure/nginx/26-landing-port.sh:/docker-entrypoint.d/26-landing-port.sh:ro
+      # SSO auth_request 开关脚本 (根据 DP_SSO_ENABLED 生成动态配置)
+      - ./infrastructure/nginx/27-sso-auth-toggle.sh:/docker-entrypoint.d/27-sso-auth-toggle.sh:ro
+    tmpfs:
+      - /etc/nginx/dynamic
+      - /usr/share/nginx/landing
+      - /var/cache/nginx/whoami
+    networks:
+      - n8network
+    depends_on:
+      - dp-wms-web
+      - dp-wf
+      - dp-bi
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # 8a. dp-wms-test — WMS 测试前端 (按需启动, profile: test)
+  #     bind-mount 热更新 + 内置 API 代理
+  # ===========================================================================
+  dp-wms-test:
+    build:
+      context: .
+      dockerfile: apps/wms/docker/Dockerfile
+    container_name: dp-wms-test
+    restart: unless-stopped
+    environment:
+      ENV_NAME: testing
+      API_BASE_URL: /api/wms
+      QR_SERVICE_URL: ${QR_SERVICE_URL:-}
+      APP_BASE_URL: ${APP_BASE_URL:-}
+      SYSTEM_TIMEZONE: ${SYSTEM_TIMEZONE:-UTC}
+      SOUND_ENABLED: ${SOUND_ENABLED:-true}
+      AUTO_FOCUS_DELAY: ${AUTO_FOCUS_DELAY:-100}
+      DEBUG: "true"
+      WMS_CONFIG: ${WMS_CONFIG:-}
+      DP_SSO_ENABLED: ${DP_SSO_ENABLED:-false}
+    volumes:
+      - ./apps/wms:/usr/share/nginx/html
+      - ./infrastructure/nginx/wms-test.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - n8network
+    profiles:
+      - test
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # 8b. dp-tunnel — 零信任隧道 (Cloudflare, 仅生产环境启用)
+  # ===========================================================================
+  dp-tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: dp-tunnel
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${DP_TUNNEL_TOKEN:-}
+    networks:
+      - n8network
+    # host.docker.internal → 宿主机: 兼容旧项目 Cloudflare 路由
+    # Docker DNS → 容器名: DP 新服务走 dp-gateway / dp-wf
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - dp-gateway
+    profiles:
+      - production
+
+  # ===========================================================================
+  # 8c. dp-sso — SSO 统一认证 (Authelia, profile: sso)
+  # ===========================================================================
+  dp-sso:
+    image: authelia/authelia:4.39.16
+    container_name: dp-sso
+    restart: unless-stopped
+    profiles: ["sso"]
+    # --- 覆盖 entrypoint: sed 模板渲染 → 启动 Authelia ---
+    # Authelia YAML 解析器不支持 ${VAR} Shell 风格插值
+    # 非密钥动态值 (域名/数据库) 用 __PLACEHOLDER__ + sed 渲染
+    # 密钥通过 AUTHELIA_* 环境变量注入 (Authelia 原生机制, 不经过文件)
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        sed \
+          -e "s|__DP_DOMAIN__|$$DP_DOMAIN|g" \
+          -e "s|__DP_SSO_COOKIE_DOMAIN__|$$DP_SSO_COOKIE_DOMAIN|g" \
+          -e "s|__DP_SSO_BASE_URL__|$$DP_SSO_BASE_URL|g" \
+          -e "s|__DP_DB_NAME__|$$DP_DB_NAME|g" \
+          -e "s|__DP_DB_USER__|$$DP_DB_USER|g" \
+          -e "s|__DP_SSO_SMTP_USERNAME__|$$DP_SSO_SMTP_USERNAME|g" \
+          /config/configuration.yml.template > /tmp/configuration.yml \
+        && if [ -n "$$DP_SSO_TUNNEL_DOMAIN" ]; then \
+          TD="$$DP_SSO_TUNNEL_DOMAIN"; \
+          TCD="$$DP_SSO_TUNNEL_COOKIE_DOMAIN"; \
+          printf "    - domain: '%s'\n      authelia_url: 'https://%s/auth'\n      default_redirection_url: 'https://%s'\n" "$$TCD" "$$TD" "$$TD" > /tmp/tunnel_cookie.yml; \
+          sed -i '/__TUNNEL_COOKIE_PLACEHOLDER__/r /tmp/tunnel_cookie.yml' /tmp/configuration.yml; \
+          sed -i '/__TUNNEL_COOKIE_PLACEHOLDER__/d' /tmp/configuration.yml; \
+          printf "        - '%s'\n        - '*.%s'\n" "$$TD" "$$TD" > /tmp/tunnel_domain.yml; \
+          for TAG in BYPASS ADMIN ADMIN_DENY WMS WMS_DENY BI BI_DENY ALL; do \
+            sed -i "/__TUNNEL_DOMAIN_$${TAG}__/r /tmp/tunnel_domain.yml" /tmp/configuration.yml; \
+            sed -i "/__TUNNEL_DOMAIN_$${TAG}__/d" /tmp/configuration.yml; \
+          done; \
+        else \
+          sed -i '/__TUNNEL_/d' /tmp/configuration.yml; \
+        fi \
+        && exec authelia --config /tmp/configuration.yml
+    environment:
+      TZ: ${SYSTEM_TIMEZONE:-UTC}
+      # === 密钥 (AUTHELIA_ 原生映射, 不经过模板文件) ===
+      AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET: ${DP_SSO_JWT_SECRET}
+      AUTHELIA_SESSION_SECRET: ${DP_SSO_SESSION_SECRET}
+      AUTHELIA_STORAGE_ENCRYPTION_KEY: ${DP_SSO_STORAGE_ENCRYPTION_KEY}
+      AUTHELIA_SESSION_REDIS_PASSWORD: ${DP_SSO_REDIS_PASSWORD}
+      AUTHELIA_STORAGE_POSTGRES_PASSWORD: ${DP_DB_PASSWORD}
+      AUTHELIA_NOTIFIER_SMTP_PASSWORD: ${DP_SSO_SMTP_PASSWORD:-}
+      # === 模板渲染 (sed 替换 __PLACEHOLDER__, 仅非密钥值) ===
+      DP_DOMAIN: ${DP_DOMAIN:-localhost}
+      DP_SSO_COOKIE_DOMAIN: ${DP_SSO_COOKIE_DOMAIN:-localhost}
+      DP_SSO_BASE_URL: ${DP_SSO_BASE_URL:-http://localhost:8080}
+      # Tunnel 域名 (可选, 空=仅本地域名; 非空=双域名 cookie+access_control)
+      DP_SSO_TUNNEL_DOMAIN: ${DP_SSO_TUNNEL_DOMAIN:-}
+      DP_SSO_TUNNEL_COOKIE_DOMAIN: ${DP_SSO_TUNNEL_COOKIE_DOMAIN:-}
+      DP_DB_NAME: ${DP_DB_NAME:-dp}
+      DP_DB_USER: ${DP_DB_USER:-dp_app}
+      # SMTP (Gmail App Password)
+      DP_SSO_SMTP_USERNAME: ${DP_SSO_SMTP_USERNAME:-}
+    volumes:
+      - ./infrastructure/sso/configuration.yml:/config/configuration.yml.template:ro
+      - ./infrastructure/sso/users.yml:/config/users.yml
+    networks:
+      - n8network
+    depends_on:
+      dp-db:
+        condition: service_healthy
+      dp-cache-sso:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9091/auth/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================================================
+  # 8d. dp-cache-sso — SSO 会话 Redis (独立实例, noeviction, profile: sso)
+  # ===========================================================================
+  dp-cache-sso:
+    image: redis:7.4-alpine
+    container_name: dp-cache-sso
+    restart: unless-stopped
+    profiles: ["sso"]
+    command: >
+      redis-server
+      /usr/local/etc/redis/redis.conf
+      --requirepass ${DP_SSO_REDIS_PASSWORD}
+    environment:
+      DP_SSO_REDIS_PASSWORD: ${DP_SSO_REDIS_PASSWORD}  # healthcheck 需要此变量
+    volumes:
+      - ./infrastructure/redis/sso.conf:/usr/local/etc/redis/redis.conf:ro
+    tmpfs:
+      - /data:size=128m
+    networks:
+      - n8network
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$DP_SSO_REDIS_PASSWORD redis-cli ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ===========================================================================
+  # 9. dp-prometheus — 指标收集 + 告警评估 (profile: monitoring)
+  # ===========================================================================
+  dp-prometheus:
+    image: prom/prometheus:v3.10.0-distroless
+    container_name: dp-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=${DP_PROMETHEUS_RETENTION:-15d}'
+      - '--storage.tsdb.wal-compression'
+      - '--enable-feature=memory-snapshot-on-shutdown'
+      - '--web.external-url=/prometheus/'
+    volumes:
+      - ./infrastructure/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - dp_prometheus_data:/prometheus
+    networks:
+      - n8network
+    depends_on:
+      dp-wf:
+        condition: service_healthy
+    profiles:
+      - monitoring
+
+  # ===========================================================================
+  # 10. dp-alertmanager — 告警路由 + 通知 (profile: monitoring)
+  # ===========================================================================
+  dp-alertmanager:
+    image: prom/alertmanager:v0.31.1
+    container_name: dp-alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--data.retention=120h'
+      - '--web.route-prefix=/alertmanager/'
+    volumes:
+      - ./infrastructure/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - dp_alertmanager_data:/alertmanager
+    networks:
+      - n8network
+    profiles:
+      - monitoring
+
+  # ===========================================================================
+  # 11. dp-grafana — 可视化仪表板 (profile: monitoring)
+  # ===========================================================================
+  dp-grafana:
+    image: ${DP_GRAFANA_IMAGE:-grafana/grafana-oss:12.4.1}
+    container_name: dp-grafana
+    restart: unless-stopped
+    environment:
+      GF_SERVER_ROOT_URL: ${DP_GRAFANA_ROOT_URL:-http://localhost:3000/grafana/}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SECURITY_ADMIN_USER: ${DP_GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${DP_GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # --- SSO Auth Proxy (Authelia X-Forwarded-User header) ---
+      GF_AUTH_PROXY_ENABLED: ${DP_SSO_ENABLED:-false}
+      GF_AUTH_PROXY_HEADER_NAME: X-Forwarded-User
+      GF_AUTH_PROXY_HEADER_PROPERTY: username
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      # Docker 内网段白名单 (防端口暴露/sidecar/debug 时 header 伪造)
+      GF_AUTH_PROXY_WHITELIST: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      TZ: ${SYSTEM_TIMEZONE:-UTC}
+    volumes:
+      - dp_grafana_data:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+    networks:
+      - n8network
+    profiles:
+      - monitoring
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ===========================================================================
+  # 12. dp-node-exporter — 宿主机指标 (profile: monitoring)
+  # ===========================================================================
+  dp-node-exporter:
+    image: prom/node-exporter:v1.10.2
+    container_name: dp-node-exporter
+    restart: unless-stopped
+    read_only: true
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--no-collector.filesystem'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    networks:
+      - n8network
+    profiles:
+      - monitoring
+
+  # ===========================================================================
+  # 13. dp-cadvisor — 容器资源指标 (profile: monitoring)
+  # ===========================================================================
+  dp-cadvisor:
+    image: ghcr.io/google/cadvisor:0.56.2
+    container_name: dp-cadvisor
+    restart: unless-stopped
+    read_only: true
+    command:
+      - '--housekeeping_interval=30s'
+      - '--store_container_labels=false'
+      - '--disable_metrics=percpu,sched,tcp,udp,referenced_memory'
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - n8network
+    profiles:
+      - monitoring
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8080"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # 14. dp-pg-exporter — PostgreSQL 指标 (profile: monitoring)
+  # ===========================================================================
+  dp-pg-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.19.1
+    container_name: dp-pg-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "host=dp-db port=5432 user=dp_monitor password=${DP_MONITOR_PASSWORD} dbname=${DP_DB_NAME:-dp} sslmode=require"
+    networks:
+      - n8network
+    depends_on:
+      dp-db:
+        condition: service_healthy
+    profiles:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9187/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # 15. dp-redis-exporter-wf — Redis WF 队列指标 (profile: monitoring)
+  # ===========================================================================
+  dp-redis-exporter-wf:
+    image: oliver006/redis_exporter:v1.82.0
+    container_name: dp-redis-exporter-wf
+    restart: unless-stopped
+    command: ['--redis.addr=redis://dp-cache-wf:6379', '--web.telemetry-path=/metrics']
+    environment:
+      REDIS_PASSWORD: "${DP_REDIS_WF_PASSWORD}"
+    networks:
+      - n8network
+    depends_on:
+      dp-cache-wf:
+        condition: service_healthy
+    profiles:
+      - monitoring
+
+  # ===========================================================================
+  # 16. dp-redis-exporter-bi — Redis BI 缓存指标 (profile: monitoring)
+  # ===========================================================================
+  dp-redis-exporter-bi:
+    image: oliver006/redis_exporter:v1.82.0
+    container_name: dp-redis-exporter-bi
+    restart: unless-stopped
+    command: ['--web.listen-address=:9122', '--redis.addr=redis://dp-cache-bi:6379', '--web.telemetry-path=/metrics']
+    environment:
+      REDIS_PASSWORD: "${DP_REDIS_BI_PASSWORD}"
+    networks:
+      - n8network
+    depends_on:
+      dp-cache-bi:
+        condition: service_healthy
+    profiles:
+      - monitoring
+
+  # ===========================================================================
+  # 17. dp-loki — 日志聚合引擎 (profile: monitoring)
+  # ===========================================================================
+  dp-loki:
+    image: grafana/loki:3.6.7
+    container_name: dp-loki
+    restart: unless-stopped
+    command:
+      - '-config.file=/etc/loki/loki-config.yml'
+      - '-config.expand-env=true'
+    environment:
+      DP_LOKI_RETENTION: ${DP_LOKI_RETENTION:-168h}
+    volumes:
+      - ./infrastructure/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - dp_loki_data:/loki
+    networks:
+      - n8network
+    profiles:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "/usr/bin/loki", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ===========================================================================
+  # 18. dp-alloy — 日志采集器 (Grafana Alloy, profile: monitoring)
+  #     替代已 EOL 的 Promtail, 通过 Docker socket 采集容器日志 → 推送到 Loki
+  # ===========================================================================
+  dp-alloy:
+    image: grafana/alloy:v1.14.1
+    container_name: dp-alloy
+    restart: unless-stopped
+    command:
+      - 'run'
+      - '/etc/alloy/config.alloy'
+      - '--server.http.listen-addr=0.0.0.0:12345'
+    volumes:
+      - ./infrastructure/loki/alloy-config.alloy:/etc/alloy/config.alloy:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - n8network
+    depends_on:
+      dp-loki:
+        condition: service_healthy
+    profiles:
+      - monitoring
+
+# =============================================================================
+# 卷 — 监控数据持久化 (Docker managed, 避免 WSL2 bind-mount 权限问题)
+# =============================================================================
+volumes:
+  dp_prometheus_data:
+  dp_alertmanager_data:
+  dp_grafana_data:
+  dp_loki_data:
+
+# =============================================================================
+# 网络 — 外部网络 (compose 不创建/不删除，需提前创建)
+# 实际网络名由 DP_DOCKER_NETWORK 控制 (默认 n8network)
+# 兼容旧项目共存: 多项目可共用同一网络，或各自独立
+# =============================================================================
+networks:
+  n8network:
+    name: ${DP_DOCKER_NETWORK:-n8network}
+    external: true

@@ -1,0 +1,201 @@
+{
+  "name": "wf08 - 库存查询",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "wms/stock",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "s0000001-0001-0001-0001-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -400,
+        300
+      ],
+      "webhookId": "wms-stock"
+    },
+    {
+      "parameters": {
+        "jsCode": "// V17: 参数化查询重构 — 消除 SQL 注入风险\n// 不再构建 WHERE 子句，只输出干净的参数值\nconst q = $input.item.json.query || {};\nconst item = (q.item || '').trim();\nconst whs = (q.whs || '').trim();\nconst bin = (q.bin || '').trim();\n\nif (!item && !whs && !bin) {\n  return { json: { _error: true, message: '请输入物料代码、仓库代码或库位' } };\n}\n\nreturn { json: {\n  _error: false,\n  p_cc: $env.DP_COMPANY_CODE || '',\n  p_item: item,\n  p_whs: whs,\n  p_bin: bin\n} };"
+      },
+      "id": "s0000001-0001-0001-0001-000000000002",
+      "name": "提取参数",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._error }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "s0000001-0001-0001-0001-000000000003",
+      "name": "Has Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        60,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: $json.message }) }}",
+        "options": {}
+      },
+      "id": "s0000001-0001-0001-0001-000000000004",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        280,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT 'S' AS _rt, item_code, item_name, foreign_name, item_group, uom, whs_code, whs_name, COALESCE(bin_code,'') AS bin_code, COALESCE(batch_number,'') AS batch_number, SUM(on_hand) AS qty, AVG(avg_price) AS avg_price, SUM(stock_value) AS stock_value, MAX(total_on_hand) AS total_on_hand, MAX(committed_qty) AS committed_qty, MAX(ordered_qty) AS ordered_qty, MAX(snapshot_date) AS snapshot_date FROM wms.wms_stock_snapshot WHERE company_code = $1 AND snapshot_date = (SELECT MAX(s2.snapshot_date) FROM wms.wms_stock_snapshot s2 WHERE s2.company_code = $1) AND ($2 = '' OR item_code = $2) AND ($3 = '' OR whs_code = $3) AND ($4 = '' OR bin_code = $4) AND on_hand > 0 GROUP BY item_code, item_name, foreign_name, item_group, uom, whs_code, whs_name, bin_code, batch_number UNION ALL SELECT 'D' AS _rt, item_code, MAX(COALESCE(item_name,'')) AS item_name, '' AS foreign_name, '' AS item_group, '' AS uom, warehouse_code AS whs_code, '' AS whs_name, COALESCE(bin_location,'') AS bin_code, COALESCE(batch_number,'') AS batch_number, SUM(CASE WHEN action IN ('receipt','count') THEN quantity WHEN action IN ('scan','issue') THEN -quantity ELSE 0 END) AS qty, 0 AS avg_price, 0 AS stock_value, 0 AS total_on_hand, 0 AS committed_qty, 0 AS ordered_qty, NULL AS snapshot_date FROM wms.wms_transactions WHERE (posted_flag=FALSE OR posted_flag IS NULL) AND action!='move' AND company_code = $1 AND ($2 = '' OR item_code = $2) AND ($3 = '' OR warehouse_code = $3) AND ($4 = '' OR bin_location = $4) GROUP BY item_code, warehouse_code, COALESCE(bin_location,''), COALESCE(batch_number,'') UNION ALL SELECT 'D' AS _rt, item_code, MAX(COALESCE(item_name,'')) AS item_name, '' AS foreign_name, '' AS item_group, '' AS uom, warehouse_code AS whs_code, '' AS whs_name, COALESCE(bin_location,'') AS bin_code, COALESCE(batch_number,'') AS batch_number, SUM(quantity) AS qty, 0 AS avg_price, 0 AS stock_value, 0 AS total_on_hand, 0 AS committed_qty, 0 AS ordered_qty, NULL AS snapshot_date FROM wms.wms_transactions WHERE (posted_flag=FALSE OR posted_flag IS NULL) AND action='move' AND company_code = $1 AND ($2 = '' OR item_code = $2) AND ($3 = '' OR warehouse_code = $3) AND ($4 = '' OR bin_location = $4) GROUP BY item_code, warehouse_code, COALESCE(bin_location,''), COALESCE(batch_number,'') UNION ALL SELECT 'D' AS _rt, item_code, MAX(COALESCE(item_name,'')) AS item_name, '' AS foreign_name, '' AS item_group, '' AS uom, COALESCE(from_warehouse, warehouse_code) AS whs_code, '' AS whs_name, COALESCE(from_bin,'') AS bin_code, COALESCE(batch_number,'') AS batch_number, SUM(-quantity) AS qty, 0 AS avg_price, 0 AS stock_value, 0 AS total_on_hand, 0 AS committed_qty, 0 AS ordered_qty, NULL AS snapshot_date FROM wms.wms_transactions WHERE (posted_flag=FALSE OR posted_flag IS NULL) AND action='move' AND company_code = $1 AND ($2 = '' OR item_code = $2) AND ($3 = '' OR (from_warehouse = $3 OR (from_warehouse IS NULL AND warehouse_code = $3))) AND ($4 = '' OR from_bin = $4) GROUP BY item_code, COALESCE(from_warehouse, warehouse_code), COALESCE(from_bin,''), COALESCE(batch_number,'') ORDER BY item_code, whs_code, bin_code",
+        "options": {
+          "queryReplacement": "={{ [$json.p_cc, $json.p_item, $json.p_whs, $json.p_bin] }}"
+        }
+      },
+      "id": "s0000001-0001-0001-0001-000000000010",
+      "name": "PG查询",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        280,
+        440
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ==========================================\n// wf08 构建响应: S(快照)/D(delta) 分开聚合\n// 前端期望: base_qty / delta_qty / real_time_qty\n// SQL _rt 标记: 'S' = snapshot, 'D' = delta (未过账事务)\n// ==========================================\nconst inputRecords = $input.all().map(i => i.json);\nconst stockMap = new Map();\n\ninputRecords.forEach(record => {\n    const item = record.item_code || 'UNKNOWN';\n    const batch = record.batch_number || '';\n    const wh = record.whs_code || '';\n    const loc = record.bin_code || '';\n    const qty = parseFloat(record.qty) || 0;\n    const rt = record._rt || 'S';\n\n    const key = `${item}|${batch}|${wh}|${loc}`;\n\n    if (!stockMap.has(key)) {\n        stockMap.set(key, {\n            item_code: item,\n            item_name: record.item_name || '',\n            foreign_name: record.foreign_name || '',\n            item_group: record.item_group || '',\n            uom: record.uom || '',\n            batch_number: batch,\n            whs_code: wh,\n            whs_name: record.whs_name || '',\n            bin_code: loc,\n            base_qty: 0,\n            delta_qty: 0,\n            real_time_qty: 0,\n            avg_price: parseFloat(record.avg_price) || 0,\n            stock_value: parseFloat(record.stock_value) || 0,\n            total_on_hand: parseFloat(record.total_on_hand) || 0,\n            committed_qty: parseFloat(record.committed_qty) || 0,\n            ordered_qty: parseFloat(record.ordered_qty) || 0,\n            snapshot_date: record.snapshot_date || null\n        });\n    }\n\n    const entry = stockMap.get(key);\n    if (rt === 'S') {\n        entry.base_qty = Math.round((entry.base_qty + qty) * 10000) / 10000;\n    } else {\n        entry.delta_qty = Math.round((entry.delta_qty + qty) * 10000) / 10000;\n    }\n    // 附加字段取最新非空值\n    if (record.item_name) entry.item_name = record.item_name;\n    if (record.whs_name) entry.whs_name = record.whs_name;\n    if (record.foreign_name) entry.foreign_name = record.foreign_name;\n    if (record.item_group) entry.item_group = record.item_group;\n    if (record.uom) entry.uom = record.uom;\n    if (parseFloat(record.avg_price)) entry.avg_price = parseFloat(record.avg_price);\n    if (parseFloat(record.stock_value)) entry.stock_value = parseFloat(record.stock_value);\n    if (parseFloat(record.total_on_hand)) entry.total_on_hand = parseFloat(record.total_on_hand);\n    if (parseFloat(record.committed_qty)) entry.committed_qty = parseFloat(record.committed_qty);\n    if (parseFloat(record.ordered_qty)) entry.ordered_qty = parseFloat(record.ordered_qty);\n    if (record.snapshot_date) entry.snapshot_date = record.snapshot_date;\n});\n\n// 补全 delta-only 行缺失的 uom (事务表无 uom，从同 item_code 的快照行取)\nconst uomMap = new Map();\nstockMap.forEach(entry => {\n    if (entry.uom && !uomMap.has(entry.item_code)) {\n        uomMap.set(entry.item_code, entry.uom);\n    }\n});\nstockMap.forEach(entry => {\n    if (!entry.uom && uomMap.has(entry.item_code)) {\n        entry.uom = uomMap.get(entry.item_code);\n    }\n});\n\n// 计算实时库存 = 快照 + WMS变动\nconst result = Array.from(stockMap.values())\n    .map(s => {\n        s.real_time_qty = Math.round((s.base_qty + s.delta_qty) * 10000) / 10000;\n        return s;\n    })\n    .filter(s => Math.abs(s.base_qty) >= 0.0001 || Math.abs(s.delta_qty) >= 0.0001);\n\nreturn [{ json: { success: true, data: result } }];"
+      },
+      "id": "s0000001-0001-0001-0001-000000000006",
+      "name": "构建响应",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "s0000001-0001-0001-0001-000000000007",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        800,
+        440
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "提取参数",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "提取参数": {
+      "main": [
+        [
+          {
+            "node": "Has Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Error?": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "PG查询",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PG查询": {
+      "main": [
+        [
+          {
+            "node": "构建响应",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "构建响应": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [
+    {
+      "updatedAt": "2026-02-23T07:36:46.036Z",
+      "createdAt": "2026-02-23T07:36:46.036Z",
+      "id": "BBQn0KdudSmtLN4e",
+      "name": "WMS"
+    }
+  ]
+}

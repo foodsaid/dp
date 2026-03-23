@@ -1,0 +1,75 @@
+// =============================================================================
+// Grafana Alloy 配置 — Docker 容器日志采集 → Loki
+// =============================================================================
+// 替代已 EOL 的 Promtail (2026-03-02 停止维护)
+// 资源占用: ~30-50MB RAM
+// =============================================================================
+
+// --- 1. 发现 Docker 容器 ---
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+// --- 2. 标签提取 (容器名 + compose 服务名) ---
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // 容器名 → container 标签
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  // compose 服务名 → compose_service 标签
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+
+  // compose 项目名 → compose_project 标签
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+
+  // 只采集 dp 项目的容器 (过滤非本项目容器)
+  rule {
+    source_labels = ["compose_project"]
+    regex         = "dp"
+    action        = "keep"
+  }
+
+  // 添加 job 标签 (仪表板查询依赖)
+  rule {
+    target_label = "job"
+    replacement  = "docker"
+  }
+}
+
+// --- 3. 采集 Docker 容器日志 ---
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.process.pipeline.receiver]
+}
+
+// --- 4. 日志处理管道 ---
+loki.process "pipeline" {
+  // 解析 Docker JSON 日志格式
+  stage.docker {}
+
+  // 丢弃超过 1 小时的旧日志 (首次启动时避免回灌历史)
+  stage.drop {
+    older_than = "1h"
+  }
+
+  forward_to = [loki.write.loki.receiver]
+}
+
+// --- 5. 推送到 Loki ---
+loki.write "loki" {
+  endpoint {
+    url = "http://dp-loki:3100/loki/api/v1/push"
+  }
+}

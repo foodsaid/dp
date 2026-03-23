@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>调拨申请 - WMS</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="shared.css?v=phase20.15">
+    <link rel="stylesheet" href="print.css?v=phase20.15">
+</head>
+
+<body>
+    <div class="beep-indicator" id="beepIndicator">&#10003;</div>
+    <div id="loader" class="loader">
+        <div class="spinner"></div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <div class="header-nav">
+                <a href="index.html" class="back-link no-print" onclick="releaseDocumentLock()">&#8592;</a>
+                <div>
+                    <span class="doc-badge-lg" id="pageBadge"></span>
+                    <h1 data-i18n="tr.title" data-short-title="TR">调拨申请 TR</h1>
+                    <p data-i18n="tr.subtitle">扫描或输入调拨申请单号，执行仓间调拨</p>
+                </div>
+                <button class="btn-logout no-print" onclick="logout()" data-i18n="logout">退出</button>
+            </div>
+            <div class="print-qr hidden" id="printQr"></div>
+        </div>
+
+        <div class="card no-print">
+            <div class="card-title" data-i18n="po.query">查询单据</div>
+            <div class="form-group">
+                <input type="text" id="scanInput" class="form-input scan-input" placeholder="扫描条码或输入单号..." data-i18n-placeholder="po.scan_hint"
+                    autocomplete="off" autocorrect="off">
+                <div class="form-hint" data-i18n="tr.scan_format_hint">输入SAP调拨申请号或扫描TR条码</div>
+            </div>
+        </div>
+
+        <div class="card hidden" id="orderCard">
+            <div class="card-title" data-i18n="tr.info">调拨信息</div>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.doc_num">单据号</span>
+                    <span class="info-value" id="docNum">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.from_whs">源仓库</span>
+                    <span class="info-value" id="fromWhs">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.to_whs">目标仓库</span>
+                    <span class="info-value text-success" id="toWhs">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.sap_status">SAP状态</span>
+                    <span class="info-value" id="docStatus">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" data-i18n="field.wms_status">WMS状态</span>
+                    <span class="info-value" id="wmsStatus">-</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card hidden" id="linesCard">
+            <div class="card-title" data-i18n="tr.line_items">行项目 (调拨)</div>
+            <div class="table-container">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th class="col-line" data-i18n="field.line_num">行</th>
+                            <th class="col-item" data-i18n="field.item_code">物料</th>
+                            <th class="col-name" data-i18n="field.item_name">名称</th>
+                            <th class="col-qty" data-i18n="field.qty">数量</th>
+                            <th class="col-qty" data-i18n="tr.transferred">已转</th>
+                            <th class="col-qty" data-i18n="tr.pending_transfer">待转</th>
+                            <th class="col-whs" data-i18n="field.from_whs">源仓</th>
+                            <th class="col-whs" data-i18n="field.to_whs">目标仓</th>
+                            <th class="col-barcode" data-i18n="field.barcode">条码</th>
+                            <th class="action-col no-print">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="linesBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card hidden" id="moveCard">
+            <div class="card-title">调拨录入 - <span id="moveItemCode"></span></div>
+            <form id="moveForm" onsubmit="handleSubmit(event)" novalidate>
+                <input type="hidden" id="selectedLine">
+                <div class="form-group">
+                    <label class="form-label" data-i18n="tr.transfer_qty">调拨数量 *</label>
+                    <input type="number" id="moveQty" class="form-input number-input" step="0.0001" min="0.0001"
+                        required onclick="this.select()" onfocus="this.select()"
+                        placeholder="输入调拨数量" data-i18n-placeholder="tr.transfer_qty_hint">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="field.operator">操作人 *</label>
+                    <input type="text" id="moveUser" class="form-input" required
+                        placeholder="操作人姓名" data-i18n-placeholder="field.operator_placeholder">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="common.remark">备注</label>
+                    <textarea id="moveRemark" class="form-input form-textarea"
+                        placeholder="选填备注" data-i18n-placeholder="field.remark_placeholder"></textarea>
+                </div>
+                <div class="btn-group">
+                    <button type="submit" class="btn btn-primary btn-block" data-i18n="tr.submit_transfer">确认调拨</button>
+                    <button type="button" class="btn btn-outline" onclick="cancelMove()" data-i18n="common.cancel">取消</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="card hidden" id="historyCard">
+            <div class="card-title" data-i18n="tr.history">调拨历史</div>
+            <div class="table-container">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th data-i18n="field.time">时间</th>
+                            <th data-i18n="field.item_code">物料</th>
+                            <th data-i18n="field.item_name">名称</th>
+                            <th data-i18n="field.qty">数量</th>
+                            <th data-i18n="field.operator">操作人</th>
+                            <th data-i18n="common.remark">备注</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyBody">
+                        <tr>
+                            <td colspan="6" class="no-data" data-i18n="common.no_data">暂无记录</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 一键调拨 -->
+        <div class="card hidden no-print" id="batchCard">
+            <button type="button" class="btn-oneclick" onclick="oneClickTransferAll()" data-i18n="tr.one_click">
+                ⚡ 一键调拨 (所有行剩余数量)
+            </button>
+        </div>
+
+        <div class="card hidden no-print" id="actionCard">
+            <div class="btn-group">
+                <button class="btn btn-outline" onclick="printDocument()" data-i18n="common.print_doc">打印单据</button>
+                <button class="btn btn-outline" onclick="printBarcode()" data-i18n="common.print_barcode">打印条码</button>
+                <button class="btn btn-danger" onclick="resetPage()" data-i18n="common.re_query">重新查询</button>
+            </div>
+        </div>
+
+        <div class="print-footer hidden">
+            WMS 调拨申请单 | 打印时间: <span id="printTime"></span>
+        </div>
+        <div class="version-footer no-print" data-i18n="app.version">WMS @Foodsaid 维护</div>
+    </div>
+
+    <script defer src="vendor/JsBarcode.all.min.js"></script>
+    <script defer src="vendor/qrcode.min.js"></script>
+    <script src="env.js"></script>
+    <script src="shared.js?v=phase20.15"></script>
+    <script src="lang.js?v=phase20.15"></script>
+    <script defer src="vendor/html5-qrcode.min.js?v=phase20.15b"></script>
+    <script src="camera-fallback.js?v=phase20.15"></script>
+    <script src="tr.js?v=phase20.15"></script>
+</body>
+
+</html>

@@ -1,0 +1,80 @@
+# =============================================================================
+# DP — WMS 测试环境网关 (dp-gateway 动态生成)
+# =============================================================================
+# 由 25-wms-test-envsubst.sh 在容器启动时通过 envsubst 生成
+# 仅当 DP_WMS_TEST_DOMAIN 有值时才生成此文件
+# 域名来源: .env 中的 DP_WMS_TEST_DOMAIN
+# =============================================================================
+
+# =====================================================================
+# HTTP:80 — 强制跳转 HTTPS
+# =====================================================================
+server {
+    listen 80;
+    server_name ${DP_WMS_TEST_DOMAIN};
+    return 301 https://$host$request_uri;
+}
+
+# =====================================================================
+# HTTPS:443 — WMS 测试入口
+# =====================================================================
+# resolver + 变量: 测试容器未启动时返回友好提示 (不阻塞 nginx 启动)
+# proxy_intercept_errors: 拦截 upstream 502/504, 触发友好页面
+# =====================================================================
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${DP_WMS_TEST_DOMAIN};
+
+    include /etc/nginx/conf.d/ssl-params.conf;
+
+    set $x_proto https;
+    include /etc/nginx/conf.d/proxy-params.conf;
+
+    # Docker 内置 DNS, 运行时解析 (容器不存在 → 502, 不阻塞 nginx 启动)
+    # resolver_timeout: 限制 DNS 解析等待 (默认 30s 太久, 容器不存在时 DNS 会挂起)
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    resolver_timeout 3s;
+    set $wms_test_backend http://dp-wms-test:80;
+
+    # 拦截 upstream 502/504 + 友好提示
+    error_page 502 504 = @wms_test_down;
+    location @wms_test_down {
+        default_type text/html;
+        return 503 '<html><body style="font-family:sans-serif;text-align:center;padding:50px"><h1>WMS Test Environment Not Running</h1><p>Start with: <code>docker compose --profile test up -d dp-wms-test</code></p></body></html>';
+    }
+
+    # ===================== WMS API → n8n webhook =====================
+    location /api/wms/ {
+        set $wf_backend http://dp-wf:5678;
+        rewrite ^/api/(.*)$ /webhook/$1 break;
+        proxy_pass $wf_backend;
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
+    }
+
+    # ===================== n8n webhook 透传 =====================
+    location /api/webhook/ {
+        set $wf_backend http://dp-wf:5678;
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass $wf_backend;
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
+    }
+
+    location /api/webhook-test/ {
+        set $wf_backend http://dp-wf:5678;
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass $wf_backend;
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
+    }
+
+    # ===================== WMS 前端静态文件 =====================
+    location / {
+        proxy_pass $wms_test_backend;
+        proxy_intercept_errors on;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 60s;
+    }
+}

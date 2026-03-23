@@ -1,0 +1,988 @@
+{
+  "name": "wf20a - OMS同步批次执行器",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 60
+            }
+          ]
+        }
+      },
+      "id": "o20a0001-0001-0001-0001-000000000001",
+      "name": "兜底定时器",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wms/oms/sync/next",
+        "responseMode": "lastNode",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "o20a0001-0001-0001-0001-000000000002",
+      "name": "链式触发",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -600,
+        400
+      ],
+      "webhookId": "wms-oms-sync-next"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT set_config('app.company_code', $1, false) AS cc",
+        "options": {
+          "queryReplacement": "={{ [$env.DP_COMPANY_CODE] }}"
+        }
+      },
+      "id": "o20a0001-0001-0001-0001-000000000003",
+      "name": "RLS set_config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -300,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE oms.sync_progress SET status='pending', started_at=NULL, error_message=NULL WHERE status='running' AND started_at < NOW() - INTERVAL '10 minutes' AND company_code = current_setting('app.company_code')",
+        "options": {}
+      },
+      "id": "o20a0001-0001-0001-0001-000000000004",
+      "name": "超时回收",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        0,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE oms.sync_progress SET status='running', started_at=NOW(), error_message=NULL WHERE id = (SELECT id FROM oms.sync_progress WHERE status='pending' AND company_code=current_setting('app.company_code') ORDER BY doc_type, month_start FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id, doc_type, month_start::text, month_end::text, company_code, row_count AS prev_row_count, sap_count AS prev_sap_count, last_anchor_date::text AS anchor_date, completed_at::text AS prev_completed_at",
+        "options": {}
+      },
+      "id": "o20a0001-0001-0001-0001-000000000005",
+      "name": "原子领取",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        300,
+        300
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.id }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "o20a0001-0001-0001-0001-000000000006",
+      "name": "有任务?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { done: true, message: 'No pending batches' } };"
+      },
+      "id": "o20a0001-0001-0001-0001-000000000007",
+      "name": "无任务退出",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- 1. 超时 syncing → error (15分钟)\nUPDATE oms.orders SET sync_status = 'error'\nWHERE company_code = current_setting('app.company_code')\n  AND sync_status = 'syncing'\n  AND updated_at < NOW() - INTERVAL '15 minutes';\n\n-- 2. 行数不一致告警 (去重: 同 order_id 1小时内不重复)\nINSERT INTO oms.wms_alerts (company_code, alert_type, severity, source, message, context)\nSELECT o.company_code, 'LINE_COUNT_MISMATCH', 'warning', 'wf20a',\n       'expected=' || o.expected_line_count || ' actual=' || COUNT(ol.id),\n       jsonb_build_object('order_id', o.id, 'doc_type', o.doc_type, 'doc_number', o.doc_number,\n                          'expected', o.expected_line_count, 'actual', COUNT(ol.id))\nFROM oms.orders o\nLEFT JOIN oms.order_lines ol ON ol.order_id = o.id AND ol.company_code = o.company_code\nWHERE o.company_code = current_setting('app.company_code')\n  AND o.sync_status = 'complete'\n  AND o.expected_line_count IS NOT NULL\nGROUP BY o.id, o.company_code, o.doc_type, o.doc_number, o.expected_line_count\nHAVING COUNT(ol.id) != o.expected_line_count\n  AND NOT EXISTS (\n    SELECT 1 FROM oms.wms_alerts a\n    WHERE a.company_code = o.company_code\n      AND a.alert_type = 'LINE_COUNT_MISMATCH'\n      AND a.context->>'order_id' = o.id::text\n      AND a.created_at > NOW() - INTERVAL '1 hour'\n  );\n\nSELECT 'monitor_done' AS status;",
+        "options": {}
+      },
+      "id": "o20a0001-0001-0001-0001-000000000040",
+      "name": "同步监控",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1200,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// V4.3: 参数校验 + 智能跳过(基于anchor) + 增量锚点\nconst task = $input.first().json;\nconst dateRegex = /^\\d{4}-\\d{2}-\\d{2}$/;\nif (!dateRegex.test(task.month_start) || !dateRegex.test(task.month_end)) {\n  throw new Error('日期格式异常: ' + task.month_start + ' / ' + task.month_end);\n}\nif (!['SO','PO','WO','TR'].includes(task.doc_type)) {\n  throw new Error('未知单据类型: ' + task.doc_type);\n}\n\nconst prevCount = Number(task.prev_row_count || 0);\nconst anchorDate = task.anchor_date || null;\n\n// 智能跳过条件:\n// 1. 历史月份 (month_end < 本月1号)\n// 2. 有 last_anchor_date (说明之前成功同步过且有数据)\n// 注: last_anchor_date 不被 wf20-xx 启动器重置，安全可靠\n// 注: 空月(无数据)没有 anchor，会重查 SAP 但秒级返回\nconst today = new Date();\nconst monthFirst = new Date(today.getFullYear(), today.getMonth(), 1);\nconst monthEnd = new Date(task.month_end);\nconst isHistorical = monthEnd < monthFirst;\nconst canSkip = isHistorical && anchorDate !== null;\n\n// 增量锚点: 当月有锚点时从锚点开始查，缩小 SAP 查询范围\nconst effectiveStart = (!canSkip && anchorDate) ? anchorDate : task.month_start;\n\nreturn { json: {\n  task_id: task.id, doc_type: task.doc_type,\n  month_start: task.month_start, month_end: task.month_end,\n  company_code: task.company_code,\n  skip_sap: canSkip,\n  effective_start: effectiveStart,\n  anchor_date: anchorDate,\n  is_historical: isHistorical,\n  prev_row_count: prevCount,\n  start_ts: Date.now()\n}};"
+      },
+      "id": "o20a0001-0001-0001-0001-000000000008",
+      "name": "参数校验",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE oms.sync_progress SET status='completed', completed_at=NOW(), context=jsonb_build_object('skipped', true, 'reason', 'sap_count_matches', 'prev_row_count', $1, 'ts', NOW()::text) WHERE id=$2",
+        "options": {
+          "queryReplacement": "={{ [$json.prev_row_count, $json.task_id] }}"
+        }
+      },
+      "id": "o20a0001-0001-0001-0001-000000000061",
+      "name": "标记skipped",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1350,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SET NOCOUNT ON;\nSELECT 'SO' AS doc_type,\n  T0.DocEntry AS sap_doc_entry, T0.DocNum AS sap_doc_num,\n  T0.CardCode AS business_partner, T0.CardName AS bp_name,\n  T0.DocDate AS doc_date, T0.DocDueDate AS due_date,\n  T0.DocStatus AS sap_status, T0.CANCELED AS sap_cancelled,\n  T0.DocTotal AS doc_total, T0.DocCur AS doc_currency,\n  CONVERT(varchar, T0.UpdateDate, 23) AS sap_update_date,\n  STUFF(STUFF(RIGHT('000000'+CAST(T0.UpdateTS AS VARCHAR),6),5,0,':'),3,0,':') AS sap_update_time,\n  T1.LineNum AS line_num, T1.ItemCode AS item_code,\n  T1.Dscription AS item_name, T1.Quantity AS quantity,\n  T1.OpenQty AS open_quantity, T1.DelivrdQty AS delivered_qty,\n  T1.WhsCode AS warehouse_code,\n  T1.UomCode AS uom, CONVERT(varchar, T1.ShipDate, 23) AS ship_date,\n  NULL AS header_item_code, NULL AS header_item_name,\n  CAST(NULL AS DECIMAL) AS header_planned_qty, CAST(NULL AS DECIMAL) AS header_actual_qty,\n  NULL AS header_warehouse,\n  NULL AS header_from_warehouse, NULL AS header_to_warehouse, NULL AS line_from_warehouse, NULL AS item_type\nFROM ORDR T0 WITH (NOLOCK)\nINNER JOIN RDR1 T1 WITH (NOLOCK) ON T0.DocEntry = T1.DocEntry\nWHERE T0.UpdateDate BETWEEN '{{ $('参数校验').first().json.effective_start }}' AND '{{ $('参数校验').first().json.month_end }}'",
+        "options": {}
+      },
+      "id": "o20a0001-0001-0001-0001-000000000010",
+      "name": "SAP-SO查询",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1,
+      "position": [
+        1650,
+        300
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "microsoftSql": {
+          "id": "__CREDENTIAL_MSSQL_ID__",
+          "name": "__CREDENTIAL_MSSQL_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SET NOCOUNT ON;\nSELECT 'PO' AS doc_type,\n  T0.DocEntry AS sap_doc_entry, T0.DocNum AS sap_doc_num,\n  T0.CardCode AS business_partner, T0.CardName AS bp_name,\n  T0.DocDate AS doc_date, T0.DocDueDate AS due_date,\n  T0.DocStatus AS sap_status, T0.CANCELED AS sap_cancelled,\n  T0.DocTotal AS doc_total, T0.DocCur AS doc_currency,\n  CONVERT(varchar, T0.UpdateDate, 23) AS sap_update_date,\n  STUFF(STUFF(RIGHT('000000'+CAST(T0.UpdateTS AS VARCHAR),6),5,0,':'),3,0,':') AS sap_update_time,\n  T1.LineNum AS line_num, T1.ItemCode AS item_code,\n  T1.Dscription AS item_name, T1.Quantity AS quantity,\n  T1.OpenQty AS open_quantity, T1.DelivrdQty AS delivered_qty,\n  T1.WhsCode AS warehouse_code,\n  T1.UomCode AS uom, NULL AS ship_date,\n  NULL AS header_item_code, NULL AS header_item_name,\n  CAST(NULL AS DECIMAL) AS header_planned_qty, CAST(NULL AS DECIMAL) AS header_actual_qty,\n  NULL AS header_warehouse,\n  NULL AS header_from_warehouse, NULL AS header_to_warehouse, NULL AS line_from_warehouse, NULL AS item_type\nFROM OPOR T0 WITH (NOLOCK)\nINNER JOIN POR1 T1 WITH (NOLOCK) ON T0.DocEntry = T1.DocEntry\nWHERE T0.UpdateDate BETWEEN '{{ $('参数校验').first().json.effective_start }}' AND '{{ $('参数校验').first().json.month_end }}'",
+        "options": {}
+      },
+      "id": "o20a0001-0001-0001-0001-000000000011",
+      "name": "SAP-PO查询",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1,
+      "position": [
+        1650,
+        500
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "microsoftSql": {
+          "id": "__CREDENTIAL_MSSQL_ID__",
+          "name": "__CREDENTIAL_MSSQL_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SET NOCOUNT ON;\nSELECT 'WO' AS doc_type,\n  T0.DocEntry AS sap_doc_entry, CAST(T0.DocNum AS VARCHAR(50)) AS sap_doc_num,\n  '' AS business_partner, '' AS bp_name,\n  T0.PostDate AS doc_date, T0.DueDate AS due_date,\n  T0.Status AS sap_status, CASE WHEN T0.Status = 'C' THEN 'Y' ELSE 'N' END AS sap_cancelled,\n  0 AS doc_total, '' AS doc_currency,\n  CONVERT(varchar, T0.UpdateDate, 23) AS sap_update_date,\n  STUFF(STUFF(RIGHT('000000'+CAST(T0.UpdateTS AS VARCHAR),6),5,0,':'),3,0,':') AS sap_update_time,\n  T1.LineNum AS line_num, T1.ItemCode AS item_code,\n  T1.ItemName AS item_name, T1.BaseQty AS quantity,\n  T1.BaseQty - T1.IssuedQty AS open_quantity, T1.IssuedQty AS issued_qty,\n  0 AS delivered_qty, T1.wareHouse AS warehouse_code,\n  T1.UomCode AS uom, NULL AS ship_date,\n  T0.ItemCode AS header_item_code, T0.ProdName AS header_item_name,\n  T0.PlannedQty AS header_planned_qty, T0.CmpltQty AS header_actual_qty,\n  T0.Warehouse AS header_warehouse,\n  NULL AS header_from_warehouse, NULL AS header_to_warehouse, NULL AS line_from_warehouse, T1.ItemType AS item_type\nFROM OWOR T0 WITH (NOLOCK)\nLEFT JOIN WOR1 T1 WITH (NOLOCK) ON T0.DocEntry = T1.DocEntry\nWHERE T0.UpdateDate BETWEEN '{{ $('参数校验').first().json.effective_start }}' AND '{{ $('参数校验').first().json.month_end }}'",
+        "options": {}
+      },
+      "id": "o20a0001-0001-0001-0001-000000000012",
+      "name": "SAP-WO查询",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1,
+      "position": [
+        1650,
+        700
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "microsoftSql": {
+          "id": "__CREDENTIAL_MSSQL_ID__",
+          "name": "__CREDENTIAL_MSSQL_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SET NOCOUNT ON;\nSELECT 'TR' AS doc_type,\n  T0.DocEntry AS sap_doc_entry, T0.DocNum AS sap_doc_num,\n  T0.CardCode AS business_partner, T0.CardName AS bp_name,\n  T0.DocDate AS doc_date, T0.DocDueDate AS due_date,\n  T0.DocStatus AS sap_status, T0.CANCELED AS sap_cancelled,\n  T0.DocTotal AS doc_total, T0.DocCur AS doc_currency,\n  CONVERT(varchar, T0.UpdateDate, 23) AS sap_update_date,\n  STUFF(STUFF(RIGHT('000000'+CAST(T0.UpdateTS AS VARCHAR),6),5,0,':'),3,0,':') AS sap_update_time,\n  T1.LineNum AS line_num, T1.ItemCode AS item_code,\n  T1.Dscription AS item_name, T1.Quantity AS quantity,\n  T1.OpenQty AS open_quantity, 0 AS delivered_qty, 0 AS issued_qty,\n  T1.WhsCode AS warehouse_code,\n  T1.UomCode AS uom, NULL AS ship_date,\n  NULL AS header_item_code, NULL AS header_item_name,\n  CAST(NULL AS DECIMAL) AS header_planned_qty, CAST(NULL AS DECIMAL) AS header_actual_qty,\n  NULL AS header_warehouse,\n  T0.Filler AS header_from_warehouse, T0.ToWhsCode AS header_to_warehouse,\n  T1.FromWhsCod AS line_from_warehouse\nFROM OWTQ T0 WITH (NOLOCK)\nINNER JOIN WTQ1 T1 WITH (NOLOCK) ON T0.DocEntry = T1.DocEntry\nWHERE T0.UpdateDate BETWEEN '{{ $('参数校验').first().json.effective_start }}' AND '{{ $('参数校验').first().json.month_end }}'",
+        "options": {}
+      },
+      "id": "o20a0001-0001-0001-0001-000000000013",
+      "name": "SAP-TR查询",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1,
+      "position": [
+        1650,
+        900
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "microsoftSql": {
+          "id": "__CREDENTIAL_MSSQL_ID__",
+          "name": "__CREDENTIAL_MSSQL_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// V4.1: 生成分批 UPSERT SQL — 防旧覆盖 + 领空保护 + sync_status + 批量(500行)\nconst taskNode = $('参数校验').first().json;\nconst companyCode = taskNode.company_code;\nconst rows = $input.all().map(r => r.json);\nconst validRows = rows.filter(r => r.doc_type && r.sap_doc_entry);\n\nif (validRows.length === 0) {\n  return [{ json: { skip: true, task_id: taskNode.task_id, count: 0, message: '无SAP数据', sap_rows: 0 } }];\n}\n\nconst orderMap = new Map();\nvalidRows.forEach(r => {\n  const key = `${r.doc_type}_${r.sap_doc_entry}`;\n  if (!orderMap.has(key)) {\n    orderMap.set(key, {\n      doc_type: r.doc_type, sap_doc_entry: r.sap_doc_entry, sap_doc_num: String(r.sap_doc_num),\n      business_partner: r.business_partner || '', bp_name: r.bp_name || '',\n      doc_date: r.doc_date || null, due_date: r.due_date || null,\n      sap_status: r.sap_status || 'O', sap_cancelled: r.sap_cancelled || 'N',\n      doc_total: r.doc_total || 0, doc_currency: r.doc_currency || '',\n      sap_update_date: r.sap_update_date || null, sap_update_time: r.sap_update_time || '00:00:00',\n      header_item_code: r.header_item_code || null, header_item_name: r.header_item_name || null,\n      header_planned_qty: r.header_planned_qty != null ? r.header_planned_qty : null,\n      header_actual_qty: r.header_actual_qty != null ? r.header_actual_qty : null,\n      header_warehouse: r.header_warehouse || null,\n      header_from_warehouse: r.header_from_warehouse || null,\n      header_to_warehouse: r.header_to_warehouse || null,\n      lines: []\n    });\n  }\n  if (r.line_num !== null && r.line_num !== undefined) { orderMap.get(key).lines.push({\n    line_num: r.line_num, item_code: r.item_code || '', item_name: r.item_name || '',\n    quantity: r.quantity || 0, open_quantity: r.open_quantity || 0,\n    delivered_qty: r.delivered_qty || 0, issued_qty: r.issued_qty || 0,\n    warehouse_code: r.warehouse_code || '', uom: r.uom || '', ship_date: r.ship_date || null,\n    from_warehouse: r.line_from_warehouse || null, item_type: r.item_type != null ? r.item_type : null,\n    sap_update_date: r.sap_update_date || null,\n    sap_update_time: r.sap_update_time || '00:00:00'\n  }); }\n});\n\nconst esc = (v) => String(v || '').replace(/'/g, \"''\");\nconst num = (v) => { const n = Number(v); return isNaN(n) ? 0 : n; };\nconst escOrNull = (v) => v === null || v === undefined ? 'NULL' : `'${esc(v)}'`;\nconst numOrNull = (v) => v === null || v === undefined ? 'NULL' : num(v);\nconst orders = Array.from(orderMap.values());\n\nconst batches = [];\nlet currentBatch = '';\nlet currentRows = 0;\n\norders.forEach(o => {\n  const hashInput = `${o.sap_status}|${o.sap_cancelled}|${o.doc_total}|${o.business_partner}|${o.lines.length}|${o.header_item_code || ''}|${o.header_planned_qty != null ? o.header_planned_qty : ''}|${o.header_actual_qty != null ? o.header_actual_qty : ''}`;\n\n  currentBatch += `\\nINSERT INTO oms.orders (company_code, doc_type, doc_number, sap_doc_entry, sap_doc_num, business_partner, bp_name, doc_date, due_date, sap_status, sap_cancelled, doc_total, doc_currency, sap_update_date, sap_update_time, item_code, item_name, planned_qty, actual_qty, warehouse_code, from_warehouse, to_warehouse, expected_line_count, sync_status, sap_data_hash, sap_last_seen_at, oms_status) VALUES ('${esc(companyCode)}', '${esc(o.doc_type)}', '${esc(o.sap_doc_num)}', ${num(o.sap_doc_entry)}, '${esc(o.sap_doc_num)}', '${esc(o.business_partner)}', '${esc(o.bp_name)}', ${escOrNull(o.doc_date)}, ${escOrNull(o.due_date)}, '${esc(o.sap_status)}', '${esc(o.sap_cancelled)}', ${num(o.doc_total)}, '${esc(o.doc_currency)}', ${escOrNull(o.sap_update_date)}, ${escOrNull(o.sap_update_time)}, ${escOrNull(o.header_item_code)}, ${escOrNull(o.header_item_name)}, ${numOrNull(o.header_planned_qty)}, ${numOrNull(o.header_actual_qty)}, ${escOrNull(o.header_warehouse)}, ${escOrNull(o.header_from_warehouse)}, ${escOrNull(o.header_to_warehouse)}, ${o.lines.length}, 'syncing', MD5('${esc(hashInput)}'), NOW(), 'pending') ON CONFLICT (company_code, doc_type, sap_doc_entry) WHERE parent_id IS NULL AND sap_doc_entry IS NOT NULL DO UPDATE SET doc_number=EXCLUDED.doc_number, sap_doc_num=EXCLUDED.sap_doc_num, business_partner=EXCLUDED.business_partner, bp_name=EXCLUDED.bp_name, doc_date=EXCLUDED.doc_date, due_date=EXCLUDED.due_date, sap_status=EXCLUDED.sap_status, sap_cancelled=EXCLUDED.sap_cancelled, doc_total=EXCLUDED.doc_total, doc_currency=EXCLUDED.doc_currency, sap_update_date=EXCLUDED.sap_update_date, sap_update_time=EXCLUDED.sap_update_time, item_code=EXCLUDED.item_code, item_name=EXCLUDED.item_name, planned_qty=EXCLUDED.planned_qty, actual_qty=EXCLUDED.actual_qty, warehouse_code=COALESCE(EXCLUDED.warehouse_code, oms.orders.warehouse_code), from_warehouse=COALESCE(EXCLUDED.from_warehouse, oms.orders.from_warehouse), to_warehouse=COALESCE(EXCLUDED.to_warehouse, oms.orders.to_warehouse), expected_line_count=EXCLUDED.expected_line_count, sync_status='syncing', sap_data_hash=EXCLUDED.sap_data_hash, sap_last_seen_at=NOW(), oms_status=CASE WHEN oms.orders.oms_status IN ('split','executing') THEN oms.orders.oms_status WHEN EXCLUDED.sap_cancelled='Y' THEN 'cancelled' WHEN EXCLUDED.sap_status IN ('C','L') THEN 'completed' ELSE oms.orders.oms_status END, execution_state=CASE WHEN oms.orders.oms_status IN ('split') OR oms.orders.execution_state='executing' THEN oms.orders.execution_state WHEN EXCLUDED.sap_cancelled='Y' THEN 'done' WHEN EXCLUDED.sap_status IN ('C','L') THEN 'done' ELSE oms.orders.execution_state END;\\n`;\n\n  o.lines.forEach(ln => {\n    const sud = escOrNull(ln.sap_update_date);\n    const sut = escOrNull(ln.sap_update_time);\n    currentBatch += `INSERT INTO oms.order_lines (order_id, company_code, line_num, item_code, item_name, quantity, open_quantity, delivered_qty, issued_qty, warehouse_code, from_warehouse, uom, ship_date, sap_update_date, sap_update_time, item_type) SELECT id, '${esc(companyCode)}', ${num(ln.line_num)}, '${esc(ln.item_code)}', '${esc(ln.item_name)}', ${num(ln.quantity)}, ${num(ln.open_quantity)}, ${num(ln.delivered_qty)}, ${num(ln.issued_qty)}, '${esc(ln.warehouse_code)}', ${escOrNull(ln.from_warehouse)}, '${esc(ln.uom)}', ${escOrNull(ln.ship_date)}, ${sud}, ${sut}, ${ln.item_type !== null && ln.item_type !== undefined ? ln.item_type : 'NULL'} FROM oms.orders WHERE company_code='${esc(companyCode)}' AND doc_type='${esc(o.doc_type)}' AND sap_doc_entry=${num(o.sap_doc_entry)} AND parent_id IS NULL ON CONFLICT (order_id, line_num) DO UPDATE SET item_code=CASE WHEN (EXCLUDED.sap_update_date, EXCLUDED.sap_update_time)>=(oms.order_lines.sap_update_date, oms.order_lines.sap_update_time) OR oms.order_lines.sap_update_date IS NULL THEN EXCLUDED.item_code ELSE oms.order_lines.item_code END, item_name=CASE WHEN (EXCLUDED.sap_update_date, EXCLUDED.sap_update_time)>=(oms.order_lines.sap_update_date, oms.order_lines.sap_update_time) OR oms.order_lines.sap_update_date IS NULL THEN EXCLUDED.item_name ELSE oms.order_lines.item_name END, quantity=CASE WHEN (EXCLUDED.sap_update_date, EXCLUDED.sap_update_time)>=(oms.order_lines.sap_update_date, oms.order_lines.sap_update_time) OR oms.order_lines.sap_update_date IS NULL THEN EXCLUDED.quantity ELSE oms.order_lines.quantity END, open_quantity=CASE WHEN (EXCLUDED.sap_update_date, EXCLUDED.sap_update_time)>=(oms.order_lines.sap_update_date, oms.order_lines.sap_update_time) OR oms.order_lines.sap_update_date IS NULL THEN EXCLUDED.open_quantity ELSE oms.order_lines.open_quantity END, delivered_qty=CASE WHEN (EXCLUDED.sap_update_date, EXCLUDED.sap_update_time)>=(oms.order_lines.sap_update_date, oms.order_lines.sap_update_time) OR oms.order_lines.sap_update_date IS NULL THEN EXCLUDED.delivered_qty ELSE oms.order_lines.delivered_qty END, issued_qty=CASE WHEN (EXCLUDED.sap_update_date, EXCLUDED.sap_update_time)>=(oms.order_lines.sap_update_date, oms.order_lines.sap_update_time) OR oms.order_lines.sap_update_date IS NULL THEN EXCLUDED.issued_qty ELSE oms.order_lines.issued_qty END, warehouse_code=EXCLUDED.warehouse_code, from_warehouse=COALESCE(EXCLUDED.from_warehouse, oms.order_lines.from_warehouse), uom=EXCLUDED.uom, ship_date=EXCLUDED.ship_date, sap_update_date=CASE WHEN (EXCLUDED.sap_update_date, EXCLUDED.sap_update_time)>=(oms.order_lines.sap_update_date, oms.order_lines.sap_update_time) OR oms.order_lines.sap_update_date IS NULL THEN EXCLUDED.sap_update_date ELSE oms.order_lines.sap_update_date END, sap_update_time=CASE WHEN (EXCLUDED.sap_update_date, EXCLUDED.sap_update_time)>=(oms.order_lines.sap_update_date, oms.order_lines.sap_update_time) OR oms.order_lines.sap_update_date IS NULL THEN EXCLUDED.sap_update_time ELSE oms.order_lines.sap_update_time END, item_type=EXCLUDED.item_type;\\n`;\n    currentRows++;\n  });\n  currentRows++;\n\n  if (currentRows >= 500) {\n    batches.push({ json: { sql: currentBatch, batch_rows: currentRows, task_id: taskNode.task_id } });\n    currentBatch = ''; currentRows = 0;\n  }\n});\n\nif (currentBatch) {\n  batches.push({ json: { sql: currentBatch, batch_rows: currentRows, task_id: taskNode.task_id } });\n}\n\nif (batches.length > 0) {\n  batches[batches.length - 1].json.total_orders = orders.length;\n  batches[batches.length - 1].json.sap_rows = validRows.length;\n}\n\nreturn batches.length > 0 ? batches : [{ json: { skip: true, task_id: taskNode.task_id, count: 0, sap_rows: 0 } }];"
+      },
+      "id": "o20a0001-0001-0001-0001-000000000014",
+      "name": "生成UPSERT SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1950,
+        600
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.skip }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "o20a0001-0001-0001-0001-000000000015",
+      "name": "Skip?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "id": "o20a0001-0001-0001-0001-000000000016",
+      "name": "批量写入OMS",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2550,
+        700
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// V4.0: 汇总 + 透明化上下文\nconst taskNode = $('参数校验').first().json;\nconst allItems = $('生成UPSERT SQL').all();\nlet totalOrders = 0;\nlet totalSapRows = 0;\nlet totalBatches = allItems.length;\nallItems.forEach(item => {\n  totalOrders += (item.json.total_orders || 0);\n  totalSapRows += (item.json.sap_rows || 0);\n});\nconst elapsedMs = Date.now() - (taskNode.start_ts || Date.now());\nconst context = JSON.stringify({\n  orders: totalOrders,\n  sap_rows: totalSapRows,\n  batches: totalBatches,\n  elapsed_ms: elapsedMs,\n  effective_start: taskNode.effective_start,\n  month_range: taskNode.month_start + ' ~ ' + taskNode.month_end,\n  anchor_used: taskNode.effective_start !== taskNode.month_start,\n  ts: new Date().toISOString()\n});\nconst validateSql = `UPDATE oms.orders o SET sync_status = CASE WHEN o.expected_line_count IS NOT NULL AND o.expected_line_count = (SELECT COUNT(*) FROM oms.order_lines WHERE order_id = o.id) THEN 'complete' WHEN o.expected_line_count IS NULL THEN 'complete' ELSE 'error' END WHERE o.company_code = current_setting('app.company_code') AND o.sync_status = 'syncing'; INSERT INTO oms.wms_alerts (company_code, alert_type, severity, source, message, context) SELECT o.company_code, 'SYNC_LINE_MISMATCH', 'warning', 'wf20a', 'Order ' || o.doc_type || ' ' || o.sap_doc_num || ': expected ' || o.expected_line_count || ' lines, got ' || cnt.actual, jsonb_build_object('order_id', o.id, 'doc_type', o.doc_type, 'expected', o.expected_line_count, 'actual', cnt.actual) FROM oms.orders o CROSS JOIN LATERAL (SELECT COUNT(*) AS actual FROM oms.order_lines WHERE order_id = o.id) cnt WHERE o.company_code = current_setting('app.company_code') AND o.sync_status = 'error' AND o.expected_line_count IS DISTINCT FROM cnt.actual AND NOT EXISTS (SELECT 1 FROM oms.wms_alerts a WHERE a.context->>'order_id' = o.id::text AND a.alert_type = 'SYNC_LINE_MISMATCH' AND a.created_at > NOW() - INTERVAL '1 hour');`;\nreturn { json: { task_id: taskNode.task_id, count: totalOrders, success: true, validate_sql: validateSql, context: context } };"
+      },
+      "id": "o20a0001-0001-0001-0001-000000000017",
+      "name": "汇总结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2850,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.validate_sql }}",
+        "options": {}
+      },
+      "id": "o20a0001-0001-0001-0001-000000000025",
+      "name": "校验sync_status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3000,
+        700
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE oms.sync_progress sp SET status='completed', row_count=$1, completed_at=NOW(), last_anchor_date=(SELECT MAX(o.sap_update_date) FROM oms.orders o WHERE o.company_code=current_setting('app.company_code') AND o.doc_type=sp.doc_type AND o.sap_update_date BETWEEN sp.month_start AND sp.month_end), context=$2::jsonb WHERE sp.id=$3",
+        "options": {
+          "queryReplacement": "={{ [$('汇总结果').first().json.count, $('汇总结果').first().json.context, $('汇总结果').first().json.task_id] }}"
+        }
+      },
+      "id": "o20a0001-0001-0001-0001-000000000018",
+      "name": "标记completed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3150,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE oms.sync_progress SET status='completed', row_count=0, completed_at=NOW(), context=jsonb_build_object('skipped', false, 'reason', 'no_sap_data', 'ts', NOW()::text) WHERE id=$1",
+        "options": {
+          "queryReplacement": "={{ [$('参数校验').first().json.task_id] }}"
+        }
+      },
+      "id": "o20a0001-0001-0001-0001-000000000019",
+      "name": "标记completed(0行)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2550,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://dp-wf:5678/webhook/wms/oms/sync/next",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "o20a0001-0001-0001-0001-000000000020",
+      "name": "触发下一批",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3450,
+        500
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {},
+      "id": "o20a0001-0001-0001-0001-000000000021",
+      "name": "错误触发器",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -600,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "let taskId = null;\ntry { taskId = $('原子领取').first().json.id; } catch(e) {}\nconst errorMsg = ($input.first().json.error && $input.first().json.error.message) || 'Unknown error';\nreturn { json: { task_id: taskId, error_message: String(errorMsg).substring(0, 500) } };"
+      },
+      "id": "o20a0001-0001-0001-0001-000000000022",
+      "name": "提取错误",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE oms.sync_progress SET status='failed', error_message=$1 WHERE id=$2",
+        "options": {
+          "queryReplacement": "={{ [$json.error_message, $json.task_id] }}"
+        }
+      },
+      "id": "o20a0001-0001-0001-0001-000000000023",
+      "name": "标记failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        0,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://dp-wf:5678/webhook/wms/oms/sync/next",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "o20a0001-0001-0001-0001-000000000024",
+      "name": "失败后继续下一批",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        300,
+        600
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 未知的 doc_type，记录告警\nconst item = $input.first();\nconst docType = item.json.doc_type || 'unknown';\nconsole.log('Unknown doc_type: ' + docType);\nreturn [{ json: { skip: true, reason: 'unknown_doc_type', doc_type: docType } }];"
+      },
+      "id": "o20a0001-0001-0001-0001-000000000051",
+      "name": "无效类型",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1350,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": ""
+                },
+                "conditions": [
+                  {
+                    "id": "skip-check",
+                    "leftValue": "={{ $json.skip_sap }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "跳过SAP"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": ""
+                },
+                "conditions": [
+                  {
+                    "id": "so-check",
+                    "leftValue": "={{ $json.doc_type }}",
+                    "rightValue": "SO",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "SO"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": ""
+                },
+                "conditions": [
+                  {
+                    "id": "po-check",
+                    "leftValue": "={{ $json.doc_type }}",
+                    "rightValue": "PO",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "PO"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": ""
+                },
+                "conditions": [
+                  {
+                    "id": "wo-check",
+                    "leftValue": "={{ $json.doc_type }}",
+                    "rightValue": "WO",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "WO"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": ""
+                },
+                "conditions": [
+                  {
+                    "id": "tr-check",
+                    "leftValue": "={{ $json.doc_type }}",
+                    "rightValue": "TR",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "TR"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1350,
+        400
+      ],
+      "id": "o20a0001-0001-0001-0001-000000000070",
+      "name": "任务路由"
+    }
+  ],
+  "connections": {
+    "兜底定时器": {
+      "main": [
+        [
+          {
+            "node": "RLS set_config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "链式触发": {
+      "main": [
+        [
+          {
+            "node": "RLS set_config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RLS set_config": {
+      "main": [
+        [
+          {
+            "node": "超时回收",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "超时回收": {
+      "main": [
+        [
+          {
+            "node": "原子领取",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "原子领取": {
+      "main": [
+        [
+          {
+            "node": "有任务?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "有任务?": {
+      "main": [
+        [
+          {
+            "node": "参数校验",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "无任务退出",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "无任务退出": {
+      "main": [
+        [
+          {
+            "node": "同步监控",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "参数校验": {
+      "main": [
+        [
+          {
+            "node": "任务路由",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "标记skipped": {
+      "main": [
+        [
+          {
+            "node": "触发下一批",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "无效类型": {
+      "main": [
+        [
+          {
+            "node": "Skip?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SAP-SO查询": {
+      "main": [
+        [
+          {
+            "node": "生成UPSERT SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SAP-PO查询": {
+      "main": [
+        [
+          {
+            "node": "生成UPSERT SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SAP-WO查询": {
+      "main": [
+        [
+          {
+            "node": "生成UPSERT SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SAP-TR查询": {
+      "main": [
+        [
+          {
+            "node": "生成UPSERT SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "生成UPSERT SQL": {
+      "main": [
+        [
+          {
+            "node": "Skip?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip?": {
+      "main": [
+        [
+          {
+            "node": "标记completed(0行)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "批量写入OMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "批量写入OMS": {
+      "main": [
+        [
+          {
+            "node": "汇总结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "汇总结果": {
+      "main": [
+        [
+          {
+            "node": "校验sync_status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "校验sync_status": {
+      "main": [
+        [
+          {
+            "node": "标记completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "标记completed": {
+      "main": [
+        [
+          {
+            "node": "触发下一批",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "标记completed(0行)": {
+      "main": [
+        [
+          {
+            "node": "触发下一批",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "错误触发器": {
+      "main": [
+        [
+          {
+            "node": "提取错误",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "提取错误": {
+      "main": [
+        [
+          {
+            "node": "标记failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "标记failed": {
+      "main": [
+        [
+          {
+            "node": "失败后继续下一批",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "任务路由": {
+      "main": [
+        [
+          {
+            "node": "标记skipped",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SAP-SO查询",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SAP-PO查询",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SAP-WO查询",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SAP-TR查询",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "无效类型",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WMS 仓库管理系统</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="shared.css?v=phase20.27">
+    <link rel="stylesheet" href="print.css?v=phase20.27">
+</head>
+
+<body>
+    <div class="beep-indicator" id="beepIndicator">&#10003;</div>
+    <div id="loader" class="loader">
+        <div class="spinner"></div>
+    </div>
+
+    <div class="container">
+        <!-- 表头 -->
+        <div class="header">
+            <div class="header-nav">
+                <div>
+                    <h1 data-i18n="app.title" data-short-title="WMS">WMS 仓库管理系统</h1>
+                    <p data-i18n="portal.subtitle">扫码快速操作 | 单据管理 | SAP集成</p>
+                    <span id="loginUserDisplay" class="header-user"></span>
+                </div>
+                <button class="btn-logout no-print" onclick="logout()" data-i18n="logout">退出</button>
+            </div>
+        </div>
+
+        <!-- 扫码快速入口 -->
+        <div class="card no-print">
+            <div class="card-title" data-i18n="portal.scan_entry">扫码快速入口</div>
+            <div class="form-group">
+                <input type="text" id="scanInput" class="form-input scan-input" placeholder="扫描条码或输入单号..."
+                    autocomplete="off" autocorrect="off" data-i18n-placeholder="portal.scan_hint">
+                <div class="form-hint" data-i18n="portal.scan_hint_detail">
+                    PO/WO/PI/SO/TR26000000，LM和IC自己产生单据，不和SAP联动
+                </div>
+            </div>
+        </div>
+
+        <!-- 功能导航 -->
+        <div class="card">
+            <div class="card-title" data-i18n="portal.doc_ops">单据操作</div>
+            <div class="tile-grid" id="docTiles">
+                <a class="tile" href="po.html" data-type="PO">
+                    <span class="tile-icon"></span>
+                    <span class="tile-label" data-i18n="doctype.PO">采购收货</span>
+                    <span class="tile-sub">PO</span>
+                </a>
+                <a class="tile" href="wo.html" data-type="WO">
+                    <span class="tile-icon"></span>
+                    <span class="tile-label" data-i18n="doctype.WO">生产收货</span>
+                    <span class="tile-sub">WO</span>
+                </a>
+                <a class="tile" href="pi.html" data-type="PI">
+                    <span class="tile-icon"></span>
+                    <span class="tile-label" data-i18n="doctype.PI">生产发料</span>
+                    <span class="tile-sub">PI</span>
+                </a>
+                <a class="tile" href="so.html" data-type="SO">
+                    <span class="tile-icon"></span>
+                    <span class="tile-label" data-i18n="doctype.SO">销售拣货</span>
+                    <span class="tile-sub">SO</span>
+                </a>
+                <a class="tile" href="tr.html" data-type="TR">
+                    <span class="tile-icon"></span>
+                    <span class="tile-label" data-i18n="doctype.TR">调拨申请</span>
+                    <span class="tile-sub">TR</span>
+                </a>
+                <a class="tile" href="lm.html" data-type="LM">
+                    <span class="tile-icon"></span>
+                    <span class="tile-label" data-i18n="doctype.LM">库位移动</span>
+                    <span class="tile-sub">LM</span>
+                </a>
+                <a class="tile" href="ic.html" data-type="IC">
+                    <span class="tile-icon"></span>
+                    <span class="tile-label" data-i18n="doctype.IC">库存盘点</span>
+                    <span class="tile-sub">IC</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- 工具 -->
+        <div class="card">
+            <div class="card-title" data-i18n="portal.tools">工具</div>
+            <div class="tile-grid" style="grid-template-columns: repeat(4, 1fr);">
+                <a class="tile" href="export.html">
+                    <span class="tile-icon">&#128190;</span>
+                    <span class="tile-label" data-i18n="tool.export">数据导出</span>
+                    <span class="tile-sub" data-i18n="tool.export.sub">CSV导出</span>
+                </a>
+
+                <a class="tile" href="stock.html">
+                    <span class="tile-icon">&#128269;</span>
+                    <span class="tile-label" data-i18n="tool.stock">库存查询</span>
+                    <span class="tile-sub" data-i18n="tool.stock.sub">实时库存</span>
+                </a>
+                <a class="tile" href="javascript:void(0)" onclick="showSyncPanel()">
+                    <span class="tile-icon">&#128260;</span>
+                    <span class="tile-label" data-i18n="tool.sync">数据同步</span>
+                    <span class="tile-sub" data-i18n="tool.sync.sub">主数据</span>
+                </a>
+                <a class="tile" href="oms.html">
+                    <span class="tile-icon" id="omsIcon">&#128220;</span>
+                    <span class="tile-label" data-i18n="tool.oms">订单管理</span>
+                    <span class="tile-sub" data-i18n="tool.oms.sub">OMS</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- 数据同步面板 -->
+        <div class="card hidden" id="syncPanel">
+            <div class="card-title" data-i18n="sync.title">主数据同步</div>
+            <div class="btn-group" style="flex-wrap:wrap;" id="syncBtnGroup">
+                <button class="btn btn-outline" onclick="syncItems()" id="btnSyncItems" disabled data-i18n-html="sync.items_btn">&#128230; 物料</button>
+                <button class="btn btn-outline" onclick="syncWarehouses()" id="btnSyncWhs" disabled data-i18n-html="sync.whs_btn">&#127970; 仓库</button>
+                <button class="btn btn-outline" onclick="syncBins()" id="btnSyncBins" disabled data-i18n-html="sync.bins_btn">&#128451; 库位</button>
+                <button class="btn btn-outline" onclick="syncStockSnapshot()" id="btnSyncStock" disabled data-i18n-html="sync.stock_btn">&#128200; 库存快照</button>
+                <button class="btn btn-outline" onclick="syncOmsType('so')" id="btnSyncOmsSo" data-i18n-html="sync.oms_so_btn">&#128203; 销售订单</button>
+                <button class="btn btn-outline" onclick="syncOmsType('po')" id="btnSyncOmsPo" data-i18n-html="sync.oms_po_btn">&#128230; 采购订单</button>
+                <button class="btn btn-outline" onclick="syncOmsType('wo')" id="btnSyncOmsWo" data-i18n-html="sync.oms_wo_btn">&#127981; 生产订单</button>
+                <button class="btn btn-outline" onclick="syncOmsType('tr')" id="btnSyncOmsTr" data-i18n-html="sync.oms_tr_btn">&#128260; 调拨订单</button>
+            </div>
+            <div id="syncStatusMsg" style="margin-top:8px;font-size:0.85rem;color:#999;"></div>
+            <div id="syncResult" style="margin-top:8px;font-size:0.85rem;color:#666;"></div>
+            <div id="omsSyncProgress" style="margin-top:8px;font-size:0.85rem;color:#1890ff;display:none;align-items:center;gap:8px;">
+                <span id="omsSyncText"></span>
+                <button class="btn btn-outline" id="btnStopOmsSync" onclick="stopOmsSync()" style="padding:2px 10px;font-size:0.8rem;border-color:#ef4444;color:#ef4444;">&#9632; 停止</button>
+            </div>
+        </div>
+
+        <!-- 最近活动 -->
+        <div class="card" id="activityCard">
+            <div class="card-title" data-i18n="portal.today">今日概览</div>
+            <div id="activityContent">
+                <div class="text-center text-muted" style="padding: 20px;" data-i18n="portal.loading">
+                    加载中...
+                </div>
+            </div>
+        </div>
+        <div class="version-footer no-print" data-i18n="app.version">WMS @Foodsaid 维护</div>
+    </div>
+
+    <script defer src="vendor/JsBarcode.all.min.js"></script>
+    <script defer src="vendor/qrcode.min.js"></script>
+    <script src="env.js"></script>
+    <script src="shared.js?v=phase20.27"></script>
+    <script src="lang.js?v=phase20.27"></script>
+    <script defer src="vendor/html5-qrcode.min.js?v=phase20.27b"></script>
+    <script src="camera-fallback.js?v=phase20.27"></script>
+    <script src="index.js?v=phase20.27"></script>
+</body>
+
+</html>

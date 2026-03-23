@@ -1,0 +1,344 @@
+{
+  "id": "2411cc19a8",
+  "name": "wf20 - OMS SAP订单同步(夜间)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 21,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "o2000001-0001-0001-0001-000000000001",
+      "name": "Cron SO 21:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -600,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 21,
+              "triggerAtMinute": 15
+            }
+          ]
+        }
+      },
+      "id": "o2000001-0001-0001-0001-000000000002",
+      "name": "Cron PO 21:15",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 21,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "id": "o2000001-0001-0001-0001-000000000003",
+      "name": "Cron WO 21:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -600,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 21,
+              "triggerAtMinute": 45
+            }
+          ]
+        }
+      },
+      "id": "o2000001-0001-0001-0001-000000000004",
+      "name": "Cron TR 21:45",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -600,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { doc_type: 'SO' } };"
+      },
+      "id": "o2000001-0001-0001-0001-000000000005",
+      "name": "Type SO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { doc_type: 'PO' } };"
+      },
+      "id": "o2000001-0001-0001-0001-000000000006",
+      "name": "Type PO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { doc_type: 'WO' } };"
+      },
+      "id": "o2000001-0001-0001-0001-000000000007",
+      "name": "Type WO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { doc_type: 'TR' } };"
+      },
+      "id": "o2000001-0001-0001-0001-000000000008",
+      "name": "Type TR",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT set_config('app.company_code', $1, false) AS cc",
+        "options": {
+          "queryReplacement": "={{ [$env.DP_COMPANY_CODE] }}"
+        }
+      },
+      "id": "o2000001-0001-0001-0001-000000000009",
+      "name": "RLS set_config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        0,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_WMS__",
+          "name": "__CREDENTIAL_PG_WMS_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// V1.1: 夜间增量 — 写入当月 pending 批次\n// 修复: $input 是 PG RLS set_config 的结果，不含 doc_type；需从上游 Type 节点获取\nconst VALID_DOC_TYPES = ['SO', 'PO', 'WO', 'TR'];\nlet docType = null;\nfor (const typeName of ['Type SO', 'Type PO', 'Type WO', 'Type TR']) {\n  try {\n    const v = $node[typeName].json.doc_type;\n    if (v && VALID_DOC_TYPES.includes(v)) { docType = v; break; }\n  } catch(e) {}\n}\nif (!docType) {\n  throw new Error('无法从上游 Type 节点获取有效的 doc_type，请检查工作流连接');\n}\nconst companyCode = ($env.DP_COMPANY_CODE || '').replace(/'/g, \"''\");\nconst now = new Date();\nconst monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);\nconst monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);\n\nlet sql = `UPDATE oms.sync_progress SET status='pending', error_message=NULL, started_at=NULL WHERE company_code='${companyCode}' AND doc_type='${docType}' AND status='failed';\\n`;\nsql += `INSERT INTO oms.sync_progress (company_code, doc_type, month_start, month_end, status) VALUES ('${companyCode}', '${docType}', '${monthStart}', '${monthEnd}', 'pending') ON CONFLICT (company_code, doc_type, month_start) DO NOTHING;`;\n\nreturn { json: { sql: sql, doc_type: docType } };"
+      },
+      "id": "o2000001-0001-0001-0001-000000000010",
+      "name": "生成当月计划",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "id": "o2000001-0001-0001-0001-000000000011",
+      "name": "写入进度表",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        600,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_WMS__",
+          "name": "__CREDENTIAL_PG_WMS_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://dp-wf:5678/webhook/wms/oms/sync/next",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "o2000001-0001-0001-0001-000000000012",
+      "name": "触发批次执行器",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        400
+      ],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Cron SO 21:00": {
+      "main": [
+        [
+          {
+            "node": "Type SO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron PO 21:15": {
+      "main": [
+        [
+          {
+            "node": "Type PO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron WO 21:30": {
+      "main": [
+        [
+          {
+            "node": "Type WO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron TR 21:45": {
+      "main": [
+        [
+          {
+            "node": "Type TR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Type SO": {
+      "main": [
+        [
+          {
+            "node": "RLS set_config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Type PO": {
+      "main": [
+        [
+          {
+            "node": "RLS set_config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Type WO": {
+      "main": [
+        [
+          {
+            "node": "RLS set_config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Type TR": {
+      "main": [
+        [
+          {
+            "node": "RLS set_config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RLS set_config": {
+      "main": [
+        [
+          {
+            "node": "生成当月计划",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "生成当月计划": {
+      "main": [
+        [
+          {
+            "node": "写入进度表",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "写入进度表": {
+      "main": [
+        [
+          {
+            "node": "触发批次执行器",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "digital-platform",
+  "version": "0.8.1",
+  "private": true,
+  "description": "DP — Digital Platform 数字大脑",
+  "scripts": {
+    "test": "jest --verbose",
+    "test:coverage": "jest --verbose --coverage",
+    "test:e2e": "npx playwright test",
+    "test:e2e:headed": "npx playwright test --headed",
+    "test:e2e:ui": "npx playwright test --ui",
+    "test:infra": "bats tests/infra/ && python3 -m pytest tests/infra/ -v",
+    "lint": "eslint apps/wms/ apps/wf/lib/ tests/unit/ scripts/n8n-tools/",
+    "lint:fix": "eslint --fix apps/wms/ apps/wf/lib/ tests/unit/ scripts/n8n-tools/"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.58.2",
+    "bats": "^1.13.0",
+    "bats-assert": "^2.2.4",
+    "bats-support": "^0.3.0",
+    "eslint": "^10.1.0",
+    "globals": "^17.4.0",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0"
+  }
+}

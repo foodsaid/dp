@@ -1,0 +1,197 @@
+{
+  "name": "wf20-so - OMS SO同步启动器",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wms/oms/sync/so",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "o20s0001-0001-0001-0001-000000000001",
+      "name": "手动同步触发",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [-400, 300],
+      "webhookId": "wms-oms-sync-so"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT set_config('app.company_code', $1, false) AS cc",
+        "options": { "queryReplacement": "={{ [$env.DP_COMPANY_CODE] }}" }
+      },
+      "id": "o20s0001-0001-0001-0001-000000000002",
+      "name": "RLS set_config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-100, 300],
+      "credentials": { "postgres": { "id": "__CREDENTIAL_PG_WMS__", "name": "__CREDENTIAL_PG_WMS_NAME__" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pg_try_advisory_lock(hashtext(current_setting('app.company_code') || 'SO')) AS acquired",
+        "options": {}
+      },
+      "id": "o20s0001-0001-0001-0001-000000000010",
+      "name": "申请锁",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [200, 300],
+      "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "__CREDENTIAL_PG_WMS__", "name": "__CREDENTIAL_PG_WMS_NAME__" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{ $json.acquired }}", "value2": true }]
+        }
+      },
+      "id": "o20s0001-0001-0001-0001-000000000012",
+      "name": "锁获取成功?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: 'SO 同步已有任务运行中，请稍后再试' }) }}",
+        "options": {}
+      },
+      "id": "o20s0001-0001-0001-0001-000000000013",
+      "name": "锁冲突响应",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [800, 150]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) AS cnt FROM oms.sync_progress WHERE company_code = current_setting('app.company_code') AND doc_type = 'SO' AND status IN ('pending', 'running')",
+        "options": {}
+      },
+      "id": "o20s0001-0001-0001-0001-000000000003",
+      "name": "检查队列",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [800, 380],
+      "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "__CREDENTIAL_PG_WMS__", "name": "__CREDENTIAL_PG_WMS_NAME__" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT MAX(sap_update_date)::text AS anchor_date FROM oms.orders WHERE company_code = current_setting('app.company_code') AND doc_type = 'SO'",
+        "options": {}
+      },
+      "id": "o20s0001-0001-0001-0001-000000000011",
+      "name": "读取锚点",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1100, 380],
+      "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "__CREDENTIAL_PG_WMS__", "name": "__CREDENTIAL_PG_WMS_NAME__" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "// V2.0: 锚点增量同步 + 月份安全回退 + 注入防护\nconst docType = 'SO';\nconst companyCode = ($env.DP_COMPANY_CODE || '').replace(/'/g, \"''\");\nconst cnt = Number($('检查队列').first().json.cnt) || 0;\n\nif (cnt > 0) {\n  return { json: { _has_queue: true, doc_type: docType, message: docType + ' 同步已在队列中，请等待完成' } };\n}\n\nconst anchorDate = $input.first().json.anchor_date;\n\nlet sql = '';\n\n// Step1: 重置 failed → pending\nsql += `UPDATE oms.sync_progress SET status='pending', error_message=NULL, started_at=NULL WHERE company_code='${companyCode}' AND doc_type='${docType}' AND status='failed';\\n`;\n\n// Step2: 如有锚点，回退 1 个月作安全窗口，重置该月及之后的 completed → pending\nif (anchorDate && anchorDate !== 'null') {\n  const d = new Date(anchorDate);\n  d.setMonth(d.getMonth() - 1);\n  const safeAnchorMonth = d.toISOString().slice(0, 7) + '-01';\n  sql += `UPDATE oms.sync_progress SET status='pending', error_message=NULL, started_at=NULL, completed_at=NULL WHERE company_code='${companyCode}' AND doc_type='${docType}' AND status='completed' AND month_start >= '${safeAnchorMonth}';\\n`;\n}\n\n// Step3: 补全所有月份（DO NOTHING 跳过已有行）\nconst startStr = ($env.DP_OMS_SYNC_START_DATE || '20240101').replace(/'/g, \"''\");\nconst startDate = new Date(startStr.slice(0,4) + '-' + startStr.slice(4,6) + '-01');\nconst now = new Date();\nconst values = [];\nfor (let d = new Date(startDate); d <= now; d.setMonth(d.getMonth() + 1)) {\n  const ms = d.toISOString().slice(0, 10);\n  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0);\n  const me = lastDay.toISOString().slice(0, 10);\n  values.push(`('${companyCode}', '${docType}', '${ms}', '${me}', 'pending')`);\n}\n\nsql += `INSERT INTO oms.sync_progress (company_code, doc_type, month_start, month_end, status)\\nVALUES ${values.join(',\\n')}\\nON CONFLICT (company_code, doc_type, month_start) DO NOTHING;`;\n\nconst safeAnchorMonth = (anchorDate && anchorDate !== 'null') ? (() => { const d = new Date(anchorDate); d.setMonth(d.getMonth()-1); return d.toISOString().slice(0,7); })() : null;\n\nreturn { json: { _has_queue: false, doc_type: docType, sql: sql, total_batches: values.length, anchor_date: anchorDate, safe_anchor_month: safeAnchorMonth } };"
+      },
+      "id": "o20s0001-0001-0001-0001-000000000004",
+      "name": "生成计划",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 380]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{ $json._has_queue }}", "value2": true }]
+        }
+      },
+      "id": "o20s0001-0001-0001-0001-000000000005",
+      "name": "已有队列?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1700, 380]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: $json.message || '同步已在队列中' }) }}",
+        "options": {}
+      },
+      "id": "o20s0001-0001-0001-0001-000000000006",
+      "name": "已在队列响应",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2000, 260]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "id": "o20s0001-0001-0001-0001-000000000007",
+      "name": "写入进度表",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2000, 500],
+      "credentials": { "postgres": { "id": "__CREDENTIAL_PG_WMS__", "name": "__CREDENTIAL_PG_WMS_NAME__" } }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, doc_type: $('生成计划').first().json.doc_type, total_batches: $('生成计划').first().json.total_batches, anchor_date: $('生成计划').first().json.anchor_date, safe_anchor_month: $('生成计划').first().json.safe_anchor_month, message: $('生成计划').first().json.doc_type + ' 同步已加入队列 (' + $('生成计划').first().json.total_batches + ' 个月)' }) }}",
+        "options": {}
+      },
+      "id": "o20s0001-0001-0001-0001-000000000008",
+      "name": "成功响应",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2300, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://dp-wf:5678/webhook/wms/oms/sync/next",
+        "sendBody": true,
+        "bodyParameters": { "parameters": [] },
+        "options": { "timeout": 5000 }
+      },
+      "id": "o20s0001-0001-0001-0001-000000000009",
+      "name": "触发批次执行器",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2600, 500],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "手动同步触发": { "main": [[{ "node": "RLS set_config", "type": "main", "index": 0 }]] },
+    "RLS set_config": { "main": [[{ "node": "申请锁", "type": "main", "index": 0 }]] },
+    "申请锁": { "main": [[{ "node": "锁获取成功?", "type": "main", "index": 0 }]] },
+    "锁获取成功?": {
+      "main": [
+        [{ "node": "检查队列", "type": "main", "index": 0 }],
+        [{ "node": "锁冲突响应", "type": "main", "index": 0 }]
+      ]
+    },
+    "检查队列": { "main": [[{ "node": "读取锚点", "type": "main", "index": 0 }]] },
+    "读取锚点": { "main": [[{ "node": "生成计划", "type": "main", "index": 0 }]] },
+    "生成计划": { "main": [[{ "node": "已有队列?", "type": "main", "index": 0 }]] },
+    "已有队列?": {
+      "main": [
+        [{ "node": "已在队列响应", "type": "main", "index": 0 }],
+        [{ "node": "写入进度表", "type": "main", "index": 0 }]
+      ]
+    },
+    "写入进度表": { "main": [[{ "node": "成功响应", "type": "main", "index": 0 }]] },
+    "成功响应": { "main": [[{ "node": "触发批次执行器", "type": "main", "index": 0 }]] },
+    "已在队列响应": { "main": [[{ "node": "触发批次执行器", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

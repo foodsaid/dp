@@ -1,0 +1,102 @@
+# =============================================================================
+# DP v0.1 — 开发环境覆盖
+# =============================================================================
+# 用法: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# 特性:
+#   - 暴露端口到宿主机 (调试用)
+#   - WMS 前端 bind-mount (热更新)
+#   - 取消资源限制
+# =============================================================================
+
+services:
+
+  dp-db:
+    ports:
+      - "127.0.0.1:${DP_DB_PORT:-5432}:5432"
+
+  dp-cache-wf:
+    ports:
+      - "127.0.0.1:${DP_REDIS_WF_PORT:-6379}:6379"
+
+  dp-cache-bi:
+    ports:
+      - "127.0.0.1:${DP_REDIS_BI_PORT:-6380}:6379"
+
+  dp-wms-web:
+    ports:
+      - "127.0.0.1:${DP_WMS_WEB_PORT:-8081}:80"
+    volumes:
+      # 开发模式: bind-mount 实现热更新 (rw: env.js 需要启动时写入)
+      # web 资源已上提至 apps/wms/，docker/ 子目录由 WMS nginx 屏蔽
+      - ./apps/wms:/usr/share/nginx/html
+
+  dp-wms-test:
+    ports:
+      - "127.0.0.1:${DP_WMS_TEST_PORT:-8082}:80"
+
+  dp-wf:
+    ports:
+      - "127.0.0.1:${DP_WF_PORT:-5678}:5678"
+
+  # dp-wf-worker: 开发环境无需暴露端口，worker 仅通过内部网络通信
+  # 如需调试指标: 取消注释 ports
+  dp-wf-worker:
+    # ports:
+    #   - "127.0.0.1:5679:5678"
+    {}
+
+  dp-bi:
+    ports:
+      - "127.0.0.1:${DP_BI_PORT:-8088}:8088"
+
+  dp-gateway:
+    ports:
+      - "127.0.0.1:${DP_GATEWAY_PORT:-8080}:80"
+      - "127.0.0.1:${DP_GATEWAY_SSL_PORT:-18443}:443"
+    volumes:
+      - ./infrastructure/nginx/certs:/etc/nginx/certs:ro
+
+  # ======================== SSO (profile: sso) ========================
+  dp-sso:
+    ports:
+      - "127.0.0.1:${DP_SSO_PORT:-19091}:9091"
+
+  # ======================== 监控 (profile: monitoring) ========================
+  dp-prometheus:
+    ports:
+      - "127.0.0.1:${DP_PROMETHEUS_PORT:-19090}:9090"
+
+  dp-alertmanager:
+    ports:
+      - "127.0.0.1:${DP_ALERTMANAGER_PORT:-19093}:9093"
+
+  dp-grafana:
+    ports:
+      - "127.0.0.1:${DP_GRAFANA_PORT:-13000}:3000"
+
+  dp-loki:
+    ports:
+      - "127.0.0.1:${DP_LOKI_PORT:-13100}:3100"
+
+  dp-alloy:
+    ports:
+      - "127.0.0.1:${DP_ALLOY_PORT:-12345}:12345"
+
+  # cAdvisor: 开发环境覆盖 (无 /dev/disk + Docker socket 路径适配)
+  # macOS: DP_DOCKER_SOCK=~/.docker/run/docker.sock (需在 .env 中设置)
+  # WSL2/Linux: DP_DOCKER_SOCK=/var/run/docker.sock (默认值, 无需设置)
+  dp-cadvisor:
+    command:
+      - '--housekeeping_interval=30s'
+      - '--store_container_labels=false'
+      - '--whitelisted_container_labels=com.docker.compose.service'
+      - '--docker_only=true'
+      - '--docker=unix:///tmp/docker.sock'
+      - '--disable_metrics=percpu,sched,tcp,udp,referenced_memory'
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - ${DP_DOCKER_SOCK:-/var/run/docker.sock}:/tmp/docker.sock:ro

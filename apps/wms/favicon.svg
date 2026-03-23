@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="100%" height="100%">
+  <defs>
+    <linearGradient id="dbBlue" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#00A2FF"/>
+      <stop offset="100%" stop-color="#005A9E"/>
+    </linearGradient>
+    <linearGradient id="wfCoral" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF6D5A"/>
+      <stop offset="100%" stop-color="#D93826"/>
+    </linearGradient>
+    <linearGradient id="biTeal" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0CA678"/>
+      <stop offset="100%" stop-color="#20C997"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.15"/>
+    </filter>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <g filter="url(#shadow)">
+    <g transform="translate(0, -6)">
+      <path d="M128 24 L224 80 L128 136 L32 80 Z" fill="url(#dbBlue)" stroke="url(#dbBlue)" stroke-width="8" stroke-linejoin="round"/>
+    </g>
+    <g transform="translate(-5.2, 3)">
+      <path d="M32 80 L128 136 L128 248 L32 192 Z" fill="url(#wfCoral)" stroke="url(#wfCoral)" stroke-width="8" stroke-linejoin="round"/>
+    </g>
+    <g transform="translate(5.2, 3)">
+      <path d="M224 80 L128 136 L128 248 L224 192 Z" fill="url(#biTeal)" stroke="url(#biTeal)" stroke-width="8" stroke-linejoin="round"/>
+    </g>
+  </g>
+  <path d="M128 100 L134 130 L164 136 L134 142 L128 172 L122 142 L92 136 L122 130 Z" fill="#FFFFFF" filter="url(#glow)"/>
+</svg>

@@ -1,0 +1,84 @@
+# ==========================================================================
+# Authelia 用户数据库模板
+# ==========================================================================
+# 实际文件: infrastructure/sso/users.yml (已 .gitignore)
+# 复制本文件并修改:
+#   cp users.yml.example users.yml
+#
+# 密码哈希生成:
+#   docker exec -it dp-sso authelia crypto hash generate argon2 --password 'YOUR_PASSWORD'
+#   # 或容器未运行时:
+#   docker run --rm authelia/authelia:4.39.16 authelia crypto hash generate argon2 --password 'YOUR_PASSWORD'
+#
+# ==========================================================================
+# 权限分组说明 (两层权限体系)
+# ==========================================================================
+#
+# 第一层: Authelia 网关门禁 (谁能进哪个模块)
+#   admins     — 全部模块 (WMS + BI + Grafana + Prometheus + Alertmanager + Loki)
+#                监控模块需二次验证 (TOTP/Passkey/WebAuthn)
+#   wms-users  — 仅 WMS 仓库管理系统 (一次验证)
+#   bi-users   — 仅 BI 数据可视化 (一次验证)
+#
+# 第二层: 应用内角色映射 (进去后能干什么)
+#   BI (Superset):
+#     admins  组 → Admin 角色 (全权限: 数据库连接管理 + 用户管理 + 所有功能)
+#     bi-users 组 → Alpha 角色 (SQL Lab + 创建图表/仪表板, 不能编辑数据库连接)
+#     无匹配组    → Gamma 角色 (仅查看被授权的仪表板)
+#   Grafana:
+#     admins  组 → Admin (通过 Auth Proxy 自动映射)
+#     其他       → Viewer
+#   WMS / Prometheus / Alertmanager / Loki:
+#     无内部角色区分, Authelia 门禁即可
+#
+# 组可自由组合: 一个用户可同时属于多个组
+# ==========================================================================
+
+users:
+  # 管理员 (全部模块 + 全部管理权限)
+  admin:
+    disabled: false
+    displayname: "管理员"
+    # 生成: docker exec -it dp-sso authelia crypto hash generate argon2 --password 'YOUR_PASSWORD'
+    password: "$argon2id$v=19$m=65536,t=3,p=4$REPLACE_WITH_REAL_HASH"
+    email: admin@example.com
+    groups:
+      - admins
+      - wms-users
+      - bi-users
+
+  # 仓库操作员 (仅 WMS)
+  # operator:
+  #   disabled: false
+  #   displayname: "操作员"
+  #   password: "$argon2id$v=19$m=65536,t=3,p=4$REPLACE_WITH_REAL_HASH"
+  #   email: operator@example.com
+  #   groups:
+  #     - wms-users
+
+  # 数据分析师 (仅 BI, Alpha 权限: SQL Lab + 创建图表)
+  # analyst:
+  #   disabled: false
+  #   displayname: "数据分析"
+  #   password: "$argon2id$v=19$m=65536,t=3,p=4$REPLACE_WITH_REAL_HASH"
+  #   email: analyst@example.com
+  #   groups:
+  #     - bi-users
+
+  # BI 只读用户 (仅 BI, Gamma 权限: 仅查看仪表板)
+  # viewer:
+  #   disabled: false
+  #   displayname: "查看者"
+  #   password: "$argon2id$v=19$m=65536,t=3,p=4$REPLACE_WITH_REAL_HASH"
+  #   email: viewer@example.com
+  #   groups: []  # 无 bi-users 组 → Superset Gamma (仅查看)
+
+  # 全业务用户 (WMS + BI Alpha, 无管理权限)
+  # fulluser:
+  #   disabled: false
+  #   displayname: "全业务"
+  #   password: "$argon2id$v=19$m=65536,t=3,p=4$REPLACE_WITH_REAL_HASH"
+  #   email: fulluser@example.com
+  #   groups:
+  #     - wms-users
+  #     - bi-users

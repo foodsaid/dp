@@ -1,0 +1,231 @@
+/**
+ * WMS - 打印专用样式
+ * 用于 window.print() 浏览器打印
+ */
+
+@media print {
+
+    /* 隐藏不需要打印的元素 */
+    .no-print,
+    .header-nav .back-link,
+    .scan-input,
+    .btn:not(.print-only),
+    .btn-group,
+    .message-toast,
+    .loader,
+    .beep-indicator,
+    .tile-grid,
+    nav,
+    footer {
+        display: none !important;
+    }
+
+    /* 页面设置 */
+    @page {
+        size: A4;
+        margin: 15mm;
+    }
+
+    /* 重置背景 */
+    body {
+        background: white;
+        color: #000;
+        font-size: 10pt;
+    }
+
+    .container {
+        max-width: 100%;
+        padding: 0;
+    }
+
+    /* 表头打印样式 — flex 单行: 标题左 + QR右 */
+    .header {
+        background: none !important;
+        color: #000 !important;
+        border: 2px solid #000;
+        border-radius: 0;
+        padding: 6px 10px;
+        margin-bottom: 8px;
+        box-shadow: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    /* 标题区域弹性伸展, 防长标题挤压 QR */
+    .header-nav {
+        flex: 1;
+        padding-right: 15px;
+    }
+
+    .header h1 {
+        font-size: 11pt;
+        color: #000;
+    }
+
+    /* 副标题隐藏 (操作提示纸面无意义) */
+    .header p {
+        display: none !important;
+    }
+
+    /* QR码内联到 header 右侧 (不再独占一行) */
+    .print-qr {
+        display: block !important;
+        text-align: right;
+        flex-shrink: 0;
+    }
+
+    /* QR 码呼吸空间 — 白色保护区防边框干扰定位角 */
+    .print-qr img {
+        width: 80px;
+        height: 80px;
+        padding: 4px;
+        background: #fff;
+    }
+
+    /* 卡片打印样式 — 不设 page-break-inside:avoid, 允许抬头和明细在同一页连续排列 */
+    .card {
+        border: 1px solid #ccc;
+        border-radius: 0;
+        padding: 6px;
+        margin-bottom: 6px;
+        box-shadow: none;
+    }
+
+    .card-title {
+        font-size: 10pt;
+        margin-bottom: 4px;
+    }
+
+    .card-title::before {
+        background: #000;
+    }
+
+    /* 订单信息区紧凑化 */
+    .info-grid {
+        gap: 2px 8px;
+    }
+
+    .info-item {
+        padding: 2px 0;
+    }
+
+    .info-label,
+    .info-value {
+        font-size: 8pt;
+    }
+
+    /* 表格打印样式 */
+    .table {
+        border-collapse: collapse;
+        width: 100%;
+    }
+
+    .table th,
+    .table td {
+        border: 1px solid #333;
+        padding: 3px 6px;
+        font-size: 8pt;
+    }
+
+    /* 表格行分页保护 — 防条码跨页断裂 */
+    .table tr {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+    }
+
+    .table thead {
+        background: #f0f0f0 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    /* 进度条打印 */
+    .progress-bar-wrapper {
+        border: 1px solid #ccc;
+    }
+
+    .progress-bar {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    /* 打印页脚 */
+    .print-footer {
+        display: block !important;
+        margin-top: 20px;
+        padding-top: 8px;
+        border-top: 1px solid #ccc;
+        font-size: 8pt;
+        color: #666;
+        text-align: center;
+    }
+
+    /* Badge颜色保留 */
+    .badge {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+        border: 1px solid #999;
+    }
+
+    /* 操作列打印时隐藏 */
+    .action-col {
+        display: none !important;
+    }
+
+    /* 行条码打印 — 57px ≈ 1.5cm @96dpi */
+    .line-barcode-col img {
+        width: 57px;
+        height: 57px;
+    }
+
+    /* 版本号打印时隐藏 */
+    .version-footer {
+        display: none !important;
+    }
+}
+
+/* 条码标签打印 (小尺寸) */
+@media print and (max-width: 100mm) {
+    @page {
+        size: 60mm 40mm;
+        margin: 2mm;
+    }
+
+    body {
+        font-size: 8pt;
+    }
+}
+
+/* Phase 15.0 打印简化 */
+@media print {
+
+    body.print-simple .table-container,
+    #historyCard,
+    #receiptCard,
+    #oneClickDiv,
+    .no-print-detail {
+        display: none !important;
+    }
+
+    /* OMS 打印: 隐藏弹窗/操作栏/分页 */
+    .modal-overlay,
+    .oms-toolbar,
+    .pagination,
+    #toolbarCard {
+        display: none !important;
+    }
+
+    /* OMS 展开行打印颜色保留 */
+    .detail-row {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .progress-fill,
+    .container-tag,
+    .badge-split {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+}

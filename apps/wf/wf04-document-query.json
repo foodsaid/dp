@@ -1,0 +1,357 @@
+{
+  "name": "wf04 - 单据查询",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "wms/documents",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c0000004-0001-0001-0001-000000000001",
+      "name": "Webhook List",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -600,
+        200
+      ],
+      "webhookId": "wms-documents"
+    },
+    {
+      "parameters": {
+        "jsCode": "// V20: 参数化查询重构 — 消除 SQL 注入风险\nconst req = $input.item.json;\nconst params = req.query || {};\nreturn { json: {\n  type: params.type || '',\n  status: params.status || '',\n  date_from: params.date_from || '',\n  date_to: params.date_to || ''\n} };"
+      },
+      "id": "c0000004-0001-0001-0001-000000000002",
+      "name": "Build Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT d.id, d.doc_type, d.doc_number, d.sap_doc_num, COALESCE(NULLIF(d.warehouse_code, ''), MAX(dl.warehouse_code)) AS warehouse_code, d.business_partner, d.bp_name, d.doc_date, d.status, d.wms_status, d.created_at, d.created_by, d.exported_at, COUNT(dl.id) AS line_count, COALESCE(SUM(dl.actual_qty), 0) AS total_qty, COALESCE(SUM(dl.actual_qty), 0) AS total_actual FROM wms.wms_documents d LEFT JOIN wms.wms_document_lines dl ON d.id = dl.document_id WHERE d.company_code = $1 AND EXISTS (SELECT 1 FROM wms.wms_transactions tx WHERE tx.document_id = d.id) AND ($2 = '' OR d.doc_type = $2) AND (($3 = 'pending_export' AND d.wms_status NOT IN ('completed','exported')) OR ($3 != 'pending_export' AND ($3 = '' OR d.wms_status = $3))) AND ($4 = '' OR d.doc_date >= NULLIF($4, '')::date) AND ($5 = '' OR d.doc_date <= NULLIF($5, '')::date) GROUP BY d.id ORDER BY d.created_at DESC LIMIT 200",
+        "options": {
+          "queryReplacement": "={{ [$env.DP_COMPANY_CODE, $json.type, $json.status, $json.date_from, $json.date_to] }}"
+        }
+      },
+      "id": "c0000004-0001-0001-0001-000000000003",
+      "name": "Query Documents",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -100,
+        200
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let rows = [];\ntry { rows = $('Query Documents').all(); } catch(e) { rows = []; }\nconst documents = rows.filter(function(r) { return r.json && r.json.id; }).map(function(r) { return r.json; });\nreturn { json: { success: true, documents: documents } };"
+      },
+      "id": "c0000004-0001-0001-0001-000000000004",
+      "name": "Format List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        180,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "c0000004-0001-0001-0001-000000000005",
+      "name": "Respond List",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        400,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "wms/document",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c0000004-0002-0001-0001-000000000001",
+      "name": "Webhook Detail",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -600,
+        700
+      ],
+      "webhookId": "wms-document"
+    },
+    {
+      "parameters": {
+        "jsCode": "const req = $input.item.json;\nlet docId = '';\nif (req.query && req.query.id) {\n  docId = req.query.id;\n} else {\n  const url = req.headers && req.headers['x-original-url'] ? req.headers['x-original-url'] : (req.url || '');\n  const parts = url.split('/');\n  const lastPart = parts[parts.length - 1];\n  docId = lastPart ? lastPart.split('?')[0] : '';\n}\nconst docType = (req.query && req.query.type) ? req.query.type : '';\nif (!docId || docId === 'document' || docId === 'undefined') {\n  return { json: { _error: true, success: false, message: '请提供单据编号' } };\n}\nreturn { json: { _error: false, docId: docId, docType: docType } };"
+      },
+      "id": "c0000004-0002-0001-0001-000000000002",
+      "name": "Extract Doc Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._error }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "c0000004-0002-0001-0001-000000000003",
+      "name": "Has Error Detail?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: $json.message }) }}",
+        "options": {}
+      },
+      "id": "c0000004-0002-0001-0001-000000000004",
+      "name": "Error Response Detail",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        180,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT d.*, dl.id AS line_id, dl.line_num, dl.item_code, dl.item_name, dl.uom, dl.planned_qty, dl.actual_qty, dl.warehouse_code AS line_whs, dl.bin_location, dl.from_warehouse, dl.from_bin, dl.to_warehouse, dl.to_bin, dl.status AS line_status, dl.wms_status AS line_wms_status FROM wms.wms_documents d LEFT JOIN wms.wms_document_lines dl ON d.id = dl.document_id WHERE d.company_code = $1 AND (d.doc_number = $2 OR d.id::text = $2) AND ($3 = '' OR d.doc_type = $3) ORDER BY dl.line_num",
+        "options": {
+          "queryReplacement": "={{ [$env.DP_COMPANY_CODE, $json.docId, $json.docType || ''] }}"
+        }
+      },
+      "id": "c0000004-0002-0001-0001-000000000005",
+      "name": "Query Doc Header",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        180,
+        700
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.id, t.action, t.item_code, t.quantity, t.warehouse_code, t.bin_location, t.from_bin, t.performed_by, t.remarks, t.transaction_time, t.scanned_barcode, dl.item_name FROM wms.wms_transactions t JOIN wms.wms_documents d ON t.document_id = d.id LEFT JOIN wms.wms_document_lines dl ON t.line_id = dl.id WHERE d.company_code = $1 AND (d.doc_number = $2 OR d.id::text = $2) AND ($3 = '' OR d.doc_type = $3) ORDER BY t.transaction_time DESC",
+        "options": {
+          "queryReplacement": "={{ [$env.DP_COMPANY_CODE, $('Extract Doc Params').item.json.docId, $('Extract Doc Params').item.json.docType || ''] }}"
+        }
+      },
+      "id": "c0000004-0002-0001-0001-000000000006",
+      "name": "Query Doc Transactions",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        380,
+        900
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let headerRows = [];\ntry { headerRows = $('Query Doc Header').all(); } catch(e) {\n  return { json: { success: false, message: '单据查询失败: ' + e.message } };\n}\nlet txRows = [];\ntry { txRows = $('Query Doc Transactions').all(); } catch(e) { txRows = []; }\n\nif (!headerRows || headerRows.length === 0 || !headerRows[0].json.id) {\n  return { json: { success: false, message: '未找到该单据' } };\n}\n\nconst first = headerRows[0].json;\nconst document = {\n  id: first.id,\n  doc_type: first.doc_type,\n  doc_number: first.doc_number,\n  sap_doc_num: first.sap_doc_num || '',\n  status: first.status,\n  wms_status: first.wms_status || first.status,\n  warehouse_code: first.warehouse_code || '',\n  business_partner: first.business_partner || '',\n  bp_name: first.bp_name || '',\n  doc_date: first.doc_date,\n  created_by: first.created_by || '',\n  remarks: first.remarks || '',\n  created_at: first.created_at,\n  exported_at: first.exported_at\n};\n\nconst lines = [];\nconst seenLines = {};\nfor (const r of headerRows) {\n  if (r.json.line_id && !seenLines[r.json.line_id]) {\n    seenLines[r.json.line_id] = true;\n    lines.push({\n      id: r.json.line_id,\n      line_num: r.json.line_num,\n      item_code: r.json.item_code || '',\n      item_name: r.json.item_name || '',\n      uom: r.json.uom || '',\n      planned_qty: parseFloat(r.json.planned_qty) || 0,\n      actual_qty: parseFloat(r.json.actual_qty) || 0,\n      warehouse_code: r.json.line_whs || '',\n      bin_location: r.json.bin_location || '',\n      from_warehouse: r.json.from_warehouse || '',\n      from_bin: r.json.from_bin || '',\n      to_warehouse: r.json.to_warehouse || '',\n      to_bin: r.json.to_bin || '',\n      status: r.json.line_status || '',\n      wms_status: r.json.line_wms_status || r.json.line_status || '',\n      updated_at: r.json.created_at\n    });\n  }\n}\n\n// 去重: n8n多行输入会导致Query Doc Transactions重复执行, 按id去重\nconst seenTx = {};\nconst transactions = [];\nfor (const r of txRows) {\n  if (r.json.id && !seenTx[r.json.id]) {\n    seenTx[r.json.id] = true;\n    transactions.push({\n      id: r.json.id,\n      action: r.json.action,\n      item_code: r.json.item_code,\n      quantity: parseFloat(r.json.quantity),\n      warehouse_code: r.json.warehouse_code || '',\n      bin_location: r.json.bin_location || '',\n      from_bin: r.json.from_bin || '',\n      to_bin: r.json.bin_location || '',\n      item_name: r.json.item_name || '',\n      performed_by: r.json.performed_by || '',\n      remarks: r.json.remarks || '',\n      transaction_time: r.json.transaction_time\n    });\n  }\n}\n\nreturn { json: { success: true, document: document, lines: lines, transactions: transactions } };"
+      },
+      "id": "c0000004-0002-0001-0001-000000000007",
+      "name": "Merge Detail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "c0000004-0002-0001-0001-000000000008",
+      "name": "Respond Detail",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        800
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook List": {
+      "main": [
+        [
+          {
+            "node": "Build Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Query": {
+      "main": [
+        [
+          {
+            "node": "Query Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Documents": {
+      "main": [
+        [
+          {
+            "node": "Format List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format List": {
+      "main": [
+        [
+          {
+            "node": "Respond List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Detail": {
+      "main": [
+        [
+          {
+            "node": "Extract Doc Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Doc Params": {
+      "main": [
+        [
+          {
+            "node": "Has Error Detail?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Error Detail?": {
+      "main": [
+        [
+          {
+            "node": "Error Response Detail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Query Doc Header",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Doc Header": {
+      "main": [
+        [
+          {
+            "node": "Query Doc Transactions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Doc Transactions": {
+      "main": [
+        [
+          {
+            "node": "Merge Detail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Detail": {
+      "main": [
+        [
+          {
+            "node": "Respond Detail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "WMS"
+    }
+  ]
+}

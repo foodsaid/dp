@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OMS 订单管理</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="shared.css?v=phase20.29">
+    <link rel="stylesheet" href="print.css?v=phase20.29">
+    <style>
+        /* OMS 专用样式 — 内联避免额外请求 */
+
+        /* ---- OMS 全屏宽适配 ---- */
+        .container { max-width: none; padding: 1rem 2rem; }
+
+        .oms-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px; }
+        .oms-toolbar .btn { font-size:0.8rem; padding:6px 12px; }
+        .oms-toolbar .toolbar-right { margin-left:auto; display:flex; gap:8px; }
+
+        /* 展开/收起行 */
+        .expand-btn { cursor:pointer; user-select:none; font-size:1.1rem; width:24px; text-align:center; color:var(--primary-color); }
+        .expand-btn:hover { color:var(--primary-dark); }
+        .detail-row { background:#f8fafc; }
+        .detail-row td { padding:4px 8px; font-size:0.8rem; border-bottom:1px solid #eee; }
+        .detail-row td.detail-line-num { color:#999; font-size:0.75rem; }
+        .detail-row.dd-children-row td { padding:6px 8px; }
+
+        /* 完成率进度条 */
+        .progress-bar { display:inline-block; width:60px; height:6px; background:#e5e7eb; border-radius:3px; vertical-align:middle; margin-right:4px; }
+        .progress-fill { height:100%; border-radius:3px; background:var(--success-color); transition:width 0.3s; }
+
+        /* 分页 */
+        .pagination { display:flex; justify-content:center; align-items:center; gap:8px; margin-top:12px; font-size:0.85rem; }
+        .pagination button { padding:4px 10px; border:1px solid var(--border-color); border-radius:var(--radius-sm); background:#fff; cursor:pointer; font-size:0.8rem; }
+        .pagination button:disabled { opacity:0.4; cursor:default; }
+        .pagination button:hover:not(:disabled) { border-color:var(--primary-color); color:var(--primary-color); }
+        .pagination .page-info { color:var(--text-secondary); }
+
+        /* 状态 badge 补充 */
+        .badge-split { background:#fce7f3; color:#9d174d; }
+        .badge-idle { background:#e5e7eb; color:#374151; }
+        .badge-executing { background:#dbeafe; color:#1e40af; }
+        .badge-done { background:#d1fae5; color:#065f46; }
+
+        /* 行选择高亮 */
+        .row-selected { background:#eff6ff !important; }
+
+        /* 已拆分 SO 灰色 (不可在 WMS 作业, DD 才是作业单) */
+        .row-split-disabled { opacity:0.5; }
+        .row-split-disabled td { color:#9ca3af !important; }
+        .row-split-disabled a { color:#9ca3af !important; pointer-events:none; }
+
+        /* 柜号标签 */
+        .container-tag { display:inline-block; padding:1px 6px; background:#fef3c7; color:#92400e; border-radius:8px; font-size:0.7rem; font-weight:500; }
+
+        /* SAP 状态多选下拉 */
+        .multi-select { position:relative; }
+        .multi-select-btn { display:flex; align-items:center; justify-content:space-between; width:100%; padding:var(--spacing-sm) var(--spacing-md); border:1px solid var(--border-color); border-radius:var(--radius-sm); background:#fff; cursor:pointer; font-size:1rem; color:var(--text-color); box-sizing:border-box; }
+        .multi-select-btn:hover { border-color:var(--primary-color); }
+        .multi-select-btn .arrow { font-size:0.6rem; color:#999; margin-left:6px; transition:transform 0.15s; }
+        .multi-select.open .arrow { transform:rotate(180deg); }
+        .multi-select-dropdown { display:none; position:absolute; top:100%; left:0; right:0; z-index:100; background:#fff; border:1px solid var(--border-color); border-top:none; border-radius:0 0 var(--radius-sm) var(--radius-sm); box-shadow:0 4px 12px rgba(0,0,0,0.1); max-height:220px; overflow-y:auto; }
+        .multi-select.open .multi-select-dropdown { display:block; }
+        .multi-select-item { display:flex; align-items:center; gap:8px; padding:6px 10px; cursor:pointer; font-size:0.83rem; transition:background 0.1s; }
+        .multi-select-item:hover { background:#f0f4ff; }
+        .multi-select-item input[type="checkbox"] { margin:0; accent-color:var(--primary-color); }
+        .multi-select-divider { border-top:1px solid #eee; margin:2px 0; }
+        .multi-select-summary { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+        /* ============================================================ */
+        /* DD 全屏看板样式 */
+        /* ============================================================ */
+        [v-cloak] { display:none !important; }
+
+        .dd-fullscreen {
+            position:fixed; inset:0; z-index:2000;
+            display:flex; flex-direction:column;
+            background:#f1f5f9;
+        }
+
+        /* 顶栏 */
+        .dd-topbar {
+            display:flex; align-items:center; gap:12px; padding:10px 16px;
+            background:linear-gradient(135deg,#ec4899 0%,#db2777 100%);
+            color:#fff; flex-shrink:0; flex-wrap:wrap;
+        }
+        .dd-topbar-source { font-weight:600; font-size:0.9rem; white-space:nowrap; }
+        .dd-search-box { position:relative; flex:0 1 260px; min-width:160px; }
+        .dd-search-box input {
+            width:100%; padding:6px 28px 6px 10px; border:none; border-radius:6px;
+            font-size:0.82rem; background:rgba(255,255,255,0.9); color:#333;
+        }
+        .dd-search-box input::placeholder { color:#999; }
+        .dd-search-box button {
+            position:absolute; right:4px; top:50%; transform:translateY(-50%);
+            background:none; border:none; color:#999; cursor:pointer; font-size:1.1rem; line-height:1; padding:2px;
+        }
+        .dd-topbar-actions { display:flex; gap:8px; margin-left:auto; }
+        .dd-topbar-actions button {
+            padding:6px 14px; border:1px solid rgba(255,255,255,0.5); border-radius:6px;
+            background:rgba(255,255,255,0.15); color:#fff; cursor:pointer; font-size:0.82rem;
+            transition:background 0.2s;
+        }
+        .dd-topbar-actions button:hover:not(:disabled) { background:rgba(255,255,255,0.3); }
+        .dd-topbar-actions button:disabled { opacity:0.5; cursor:not-allowed; }
+        .dd-topbar-actions button.btn-submit {
+            background:rgba(255,255,255,0.95); color:#db2777; font-weight:600; border-color:#fff;
+        }
+        .dd-topbar-actions button.btn-submit:hover:not(:disabled) { background:#fff; }
+
+        /* 看板容器 */
+        .dd-board {
+            flex:1; overflow-x:auto; overflow-y:hidden;
+            display:flex; gap:12px; padding:12px 16px;
+            align-items:flex-start;
+        }
+
+        /* 列 (池 + 柜) */
+        .dd-column {
+            width:300px; min-width:280px; flex-shrink:0;
+            display:flex; flex-direction:column;
+            background:#fff; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,0.1);
+            max-height:100%; overflow:hidden;
+            transition:box-shadow 0.2s;
+        }
+        .dd-column.drag-over { box-shadow:0 0 0 2px #ec4899, 0 4px 12px rgba(236,72,153,0.3); }
+
+        /* 待分配池 — 特殊背景 */
+        .dd-pool { background:#fdf2f8; }
+        .dd-pool .dd-col-header { background:#fce7f3; }
+
+        /* 列头 */
+        .dd-col-header {
+            padding:10px 12px; border-bottom:1px solid #e5e7eb;
+            flex-shrink:0;
+        }
+        .dd-col-header-row { display:flex; align-items:center; gap:8px; }
+        .dd-col-title { font-weight:700; font-size:0.9rem; color:#333; white-space:nowrap; }
+        .dd-col-header input {
+            flex:1; padding:4px 8px; border:1px solid #ddd; border-radius:4px;
+            font-size:0.82rem; min-width:0;
+        }
+        .dd-col-header input:focus { border-color:#ec4899; outline:none; box-shadow:0 0 0 2px rgba(236,72,153,0.2); }
+        .dd-col-actions { display:flex; gap:6px; margin-top:6px; }
+        .dd-col-actions button {
+            padding:2px 8px; font-size:0.72rem; border:1px solid #ddd; border-radius:4px;
+            background:#fff; cursor:pointer; color:#666; transition:all 0.15s;
+        }
+        .dd-col-actions button:hover { border-color:#ec4899; color:#ec4899; }
+        .dd-col-actions button.btn-danger:hover { border-color:#ef4444; color:#ef4444; }
+
+        /* 列体 (滚动区 + Drop 目标) */
+        .dd-col-body {
+            flex:1; overflow-y:auto; padding:6px 8px;
+            min-height:80px;
+        }
+
+        /* 物料行 */
+        .dd-item-row {
+            display:flex; align-items:center; gap:6px; padding:6px 8px;
+            border-radius:6px; margin-bottom:4px;
+            background:#f8fafc; border:1px solid #e5e7eb;
+            cursor:grab; transition:all 0.15s; font-size:0.8rem;
+        }
+        .dd-item-row:hover { border-color:#cbd5e1; background:#f1f5f9; }
+        .dd-item-row.dragging { opacity:0.4; }
+        .drag-handle { color:#94a3b8; font-size:1rem; cursor:grab; flex-shrink:0; user-select:none; }
+        .item-info { flex:1; min-width:0; overflow:hidden; }
+        .item-code { font-weight:600; font-size:0.78rem; color:#334155; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .item-name { font-size:0.7rem; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .item-qty { display:flex; align-items:center; gap:4px; flex-shrink:0; }
+        .remaining-badge {
+            display:inline-block; padding:2px 8px; background:#fef3c7; color:#92400e;
+            border-radius:10px; font-weight:600; font-size:0.78rem;
+        }
+        .planned { font-size:0.72rem; color:#94a3b8; }
+        .item-qty input[type="number"] {
+            width:72px; padding:3px 4px; border:1px solid #ddd; border-radius:4px;
+            font-size:0.8rem; text-align:right;
+        }
+        .item-qty input[type="number"]:focus { border-color:#ec4899; outline:none; box-shadow:0 0 0 2px rgba(236,72,153,0.2); }
+
+        /* 空提示 */
+        .dd-empty-hint { text-align:center; padding:20px 8px; color:#94a3b8; font-size:0.82rem; }
+
+        /* 列脚 */
+        .dd-col-footer {
+            padding:8px 12px; border-top:1px solid #e5e7eb;
+            font-size:0.75rem; color:#64748b;
+            display:flex; flex-wrap:wrap; gap:8px; flex-shrink:0;
+        }
+
+        /* 添加柜按钮 */
+        .dd-column-add {
+            width:80px; min-width:80px; flex-shrink:0;
+            display:flex; align-items:center; justify-content:center;
+            background:#fff; border:2px dashed #cbd5e1; border-radius:10px;
+            cursor:pointer; color:#94a3b8; font-size:1.2rem; font-weight:600;
+            min-height:120px; transition:all 0.2s;
+        }
+        .dd-column-add:hover { border-color:#ec4899; color:#ec4899; background:#fdf2f8; }
+
+        /* 底栏 */
+        .dd-bottombar {
+            display:flex; flex-wrap:wrap; gap:8px; padding:8px 16px;
+            background:#fff; border-top:1px solid #e5e7eb; flex-shrink:0;
+            align-items:center; font-size:0.78rem;
+        }
+        .dd-summary-item { display:flex; align-items:center; gap:4px; }
+        .dd-status-ok { color:#10b981; font-weight:600; }
+        .dd-status-warn { color:#f59e0b; font-weight:600; }
+        .dd-status-err { color:#ef4444; font-weight:600; }
+        .dd-all-ok { color:#10b981; font-weight:600; font-size:0.82rem; margin-left:auto; }
+    </style>
+
+</head>
+<body>
+    <div id="loader" class="loader"><div class="spinner"></div></div>
+
+    <div class="container">
+        <div class="header">
+            <div class="header-nav">
+                <a href="index.html" class="back-link no-print">&#8592;</a>
+                <div>
+                    <h1 data-i18n="oms.title" data-short-title="OMS">OMS 订单管理</h1>
+                    <p data-i18n="oms.subtitle">订单查询、DD拆单、批量打印</p>
+                </div>
+                <button class="btn-logout no-print" onclick="logout()" data-i18n="logout">退出</button>
+            </div>
+        </div>
+
+        <!-- 搜索面板 -->
+        <div class="card no-print">
+            <div class="card-title" data-i18n="oms.query">订单查询</div>
+            <div class="info-grid">
+                <div class="form-group">
+                    <label class="form-label" data-i18n="oms.search_type">单据类型</label>
+                    <select id="filterType" class="form-input form-select" onchange="onDocTypeChange(this.value)">
+                        <option value="" data-i18n="oms.type_all">全部类型</option>
+                        <option value="SO">SO</option>
+                        <option value="PO">PO</option>
+                        <option value="WO">WO</option>
+                        <option value="TR">TR</option>
+                        <option value="DD">DD</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="oms.search_bp">客商代码</label>
+                    <input type="text" id="filterBP" class="form-input" placeholder="BP Code" autocomplete="off" data-i18n-placeholder="oms.bp_placeholder">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="oms.search_bp_name">客商名称</label>
+                    <input type="text" id="filterBPName" class="form-input" placeholder="BP Name" autocomplete="off" data-i18n-placeholder="oms.bp_name_placeholder">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="oms.search_doc_num">单号</label>
+                    <input type="text" id="filterDocNum" class="form-input" placeholder="单号（空格分隔批量，最多50个）" autocomplete="off" data-i18n-placeholder="oms.doc_num_batch_hint">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="oms.search_warehouse">仓库</label>
+                    <input type="text" id="filterWarehouse" class="form-input" placeholder="WH Code" autocomplete="off" data-i18n-placeholder="oms.warehouse_placeholder"
+                           oninput="this.value=this.value.toUpperCase()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="oms.search_container">柜号</label>
+                    <input type="text" id="filterContainer" class="form-input" placeholder="Container No" autocomplete="off" data-i18n-placeholder="oms.container_placeholder">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="oms.search_status">OMS状态</label>
+                    <div class="multi-select" id="omsStatusSelect">
+                        <div class="multi-select-btn" onclick="toggleOmsDropdown()">
+                            <span class="multi-select-summary" id="omsStatusSummary">全部状态</span>
+                            <span class="arrow">&#9660;</span>
+                        </div>
+                        <div class="multi-select-dropdown">
+                            <label class="multi-select-item" onclick="event.stopPropagation()">
+                                <input type="checkbox" id="omsChkAll" checked onchange="toggleOmsAll(this.checked)">
+                                <span data-i18n="oms.status_all">全部状态</span>
+                            </label>
+                            <div class="multi-select-divider"></div>
+                            <label class="multi-select-item" onclick="event.stopPropagation()">
+                                <input type="checkbox" class="oms-chk" value="pending" checked onchange="onOmsChkChange()">
+                                <span data-i18n="oms.status_pending">待处理</span>
+                            </label>
+                            <label class="multi-select-item" onclick="event.stopPropagation()">
+                                <input type="checkbox" class="oms-chk" value="in_progress" checked onchange="onOmsChkChange()">
+                                <span data-i18n="oms.status_in_progress">进行中</span>
+                            </label>
+                            <label class="multi-select-item" onclick="event.stopPropagation()">
+                                <input type="checkbox" class="oms-chk" value="completed" checked onchange="onOmsChkChange()">
+                                <span data-i18n="oms.status_completed">已完成</span>
+                            </label>
+                            <label class="multi-select-item" onclick="event.stopPropagation()">
+                                <input type="checkbox" class="oms-chk" value="split" checked onchange="onOmsChkChange()">
+                                <span data-i18n="oms.status_split">已拆分</span>
+                            </label>
+                            <label class="multi-select-item" onclick="event.stopPropagation()">
+                                <input type="checkbox" class="oms-chk" value="exported" checked onchange="onOmsChkChange()">
+                                <span data-i18n="oms.status_exported">已导出</span>
+                            </label>
+                            <label class="multi-select-item" onclick="event.stopPropagation()">
+                                <input type="checkbox" class="oms-chk" value="cancelled" checked onchange="onOmsChkChange()">
+                                <span data-i18n="oms.status_cancelled">已取消</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group" id="sapStatusGroup">
+                    <label class="form-label" data-i18n="oms.search_sap_status">SAP状态</label>
+                    <div class="multi-select" id="sapStatusSelect">
+                        <div class="multi-select-btn" onclick="toggleSapDropdown()">
+                            <span class="multi-select-summary" id="sapStatusSummary">-</span>
+                            <span class="arrow">&#9660;</span>
+                        </div>
+                        <div class="multi-select-dropdown">
+                            <label class="multi-select-item" onclick="event.stopPropagation()">
+                                <input type="checkbox" id="sapChkAll" onchange="toggleSapAll(this.checked)">
+                                <span data-i18n="oms.sap_status_all">全部</span>
+                            </label>
+                            <div class="multi-select-divider"></div>
+                            <label class="multi-select-item" onclick="event.stopPropagation()">
+                                <input type="checkbox" class="sap-chk" value="open" checked onchange="onSapChkChange()">
+                                <span data-i18n="oms.sap_status_open">打开</span>
+                            </label>
+                            <label class="multi-select-item" onclick="event.stopPropagation()">
+                                <input type="checkbox" class="sap-chk" value="planned" checked onchange="onSapChkChange()">
+                                <span data-i18n="oms.sap_status_planned">计划</span>
+                            </label>
+                            <label class="multi-select-item" onclick="event.stopPropagation()">
+                                <input type="checkbox" class="sap-chk" value="released" checked onchange="onSapChkChange()">
+                                <span data-i18n="oms.sap_status_released">已释放</span>
+                            </label>
+                            <label class="multi-select-item" onclick="event.stopPropagation()">
+                                <input type="checkbox" class="sap-chk" value="closed" onchange="onSapChkChange()">
+                                <span data-i18n="oms.sap_status_closed">已关闭</span>
+                            </label>
+                            <label class="multi-select-item" onclick="event.stopPropagation()">
+                                <input type="checkbox" class="sap-chk" value="cancelled" onchange="onSapChkChange()">
+                                <span data-i18n="oms.sap_status_cancelled">已取消</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="oms.search_date_from">开始日期</label>
+                    <input type="date" id="filterDateFrom" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="oms.search_date_to">结束日期</label>
+                    <input type="date" id="filterDateTo" class="form-input">
+                </div>
+                <div class="form-group" style="display:flex; align-items:flex-end; gap:8px; padding-bottom:2px;">
+                    <button class="btn btn-primary" onclick="queryOrders()" data-i18n="oms.query" style="white-space:nowrap;">查询</button>
+                    <button class="btn btn-outline" onclick="resetFilters()" data-i18n="oms.reset" style="white-space:nowrap;">重置</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作栏 -->
+        <div class="card no-print" id="toolbarCard" style="display:none;">
+            <div class="oms-toolbar">
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                    <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+                    <span data-i18n="oms.select_all">全选</span>
+                </label>
+                <span id="btnExpandAll" onclick="expandAll()" style="cursor:pointer;font-size:1rem;padding:2px 6px;opacity:1;user-select:none;" title="展开全部">＋</span>
+                <span id="btnCollapseAll" onclick="collapseAll()" style="cursor:pointer;font-size:1rem;padding:2px 6px;opacity:0.4;user-select:none;" title="折叠全部">－</span>
+                <span id="selectionCount" style="font-size:0.8rem;color:var(--text-secondary);"></span>
+                <div class="toolbar-right">
+                    <button class="btn btn-outline" onclick="printSelectedOrders()" data-i18n="oms.print_order">打印订单</button>
+                    <button class="btn btn-outline" onclick="printSelectedBarcodes()" data-i18n="oms.print_barcode">打印条码</button>
+                    <button class="btn btn-primary" onclick="openDDSplitModal()" data-i18n="oms.dd_create" style="background:#ec4899;border-color:#ec4899;">创建DD</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 结果表格 -->
+        <div class="card" id="resultCard" style="display:none;">
+            <div class="card-title">
+                <span data-i18n="oms.order_info">订单信息</span>
+                (<span id="resultCount">0</span>)
+            </div>
+            <div class="table-container">
+                <table class="table" id="orderTable">
+                    <thead>
+                        <tr>
+                            <th style="width:30px;"><input type="checkbox" id="selectAllHead" onchange="toggleSelectAll()"></th>
+                            <th style="width:30px;" data-i18n="oms.col_expand">+/-</th>
+                            <th data-i18n="oms.col_type">类型</th>
+                            <th data-i18n="oms.col_doc_num">单号</th>
+                            <th data-i18n="oms.col_item_code">物料号</th>
+                            <th data-i18n="oms.col_bp_desc">客商/物料描述</th>
+                            <th style="text-align:right;" data-i18n="field.planned_qty">计划数</th>
+                            <th style="text-align:right;" data-i18n="oms.col_actual_qty">已处理</th>
+                            <th data-i18n="field.warehouse">仓库</th>
+                            <th data-i18n="oms.col_date">日期</th>
+                            <th data-i18n="oms.col_sap_status">SAP状态</th>
+                            <th data-i18n="oms.col_status">OMS状态</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orderBody">
+                        <tr><td colspan="12" class="no-data" data-i18n="export.load_hint">请点击"查询"加载数据</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <!-- 分页 -->
+            <div class="pagination" id="pagination" style="display:none;">
+                <button onclick="goPage(1)" id="btnFirst" disabled>&#171;</button>
+                <button onclick="goPage(OmsState.getPage() - 1)" id="btnPrev" disabled>&#8249;</button>
+                <span class="page-info" id="pageInfo"></span>
+                <button onclick="goPage(OmsState.getPage() + 1)" id="btnNext" disabled>&#8250;</button>
+                <button onclick="goPage(OmsState.getTotalPages())" id="btnLast" disabled>&#187;</button>
+                <select id="pageSizeSelect" onchange="changePageSize(this.value)" style="margin-left:12px;padding:3px 6px;font-size:0.8rem;border:1px solid var(--border-color);border-radius:var(--radius-sm);">
+                    <option value="20" data-i18n="oms.page_20">20条/页</option>
+                    <option value="50" data-i18n="oms.page_50">50条/页</option>
+                    <option value="100" data-i18n="oms.page_100">100条/页</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="version-footer no-print" data-i18n="app.version">WMS @Foodsaid 维护</div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- DD 全屏看板 (Vue 3 App) -->
+    <!-- ============================================================ -->
+    <div id="ddApp" v-cloak>
+    <div class="dd-fullscreen" v-if="showBoard">
+        <!-- 顶栏 -->
+        <div class="dd-topbar">
+            <div class="dd-topbar-source">{{ sourceLabel }}</div>
+            <div class="dd-search-box">
+                <input v-model="searchTerm" :placeholder="t('oms.dd_search_placeholder', '搜索物料号/名称...')">
+                <button v-show="searchTerm" @click="searchTerm=''">&times;</button>
+            </div>
+            <div class="dd-topbar-actions">
+                <button v-show="containers.length>=2" @click="splitEvenly()">{{ t('oms.dd_split_even', '均分') }}</button>
+                <button @click="closeBoard()">{{ t('common.cancel', '取消') }}</button>
+                <button class="btn-submit" @click="submitDD()" :disabled="isSubmitting">{{ isSubmitting ? t('oms.dd_submitting', '提交中...') : t('oms.dd_submit', '提交拆单') }}</button>
+            </div>
+        </div>
+
+        <!-- 看板 -->
+        <div class="dd-board">
+            <!-- 左侧固定: 待分配池 -->
+            <div class="dd-pool dd-column"
+                 :class="{ 'drag-over': dragOverTarget==='pool' }"
+                 @dragover.prevent="dragOverTarget='pool'"
+                 @dragleave="onPoolLeave($event)"
+                 @drop.prevent="onDropToPool()">
+                <div class="dd-col-header">
+                    <span class="dd-col-title">&#128230; {{ t('oms.dd_pool_title', '待分配') }}</span>
+                </div>
+                <div class="dd-col-body">
+                    <div v-for="item in poolItems" :key="'pool-'+item.lineKey"
+                         class="dd-item-row" draggable="true"
+                         @dragstart="onDragStart($event, 'pool', item.lineKey)"
+                         @dragend="onDragEnd()">
+                        <span class="drag-handle">&#x2807;</span>
+                        <div class="item-info">
+                            <div class="item-code">{{ item.itemCode }} <small v-if="item.sapDocNum">(SO#{{ item.sapDocNum }} L{{ item.lineNum }})</small></div>
+                            <div class="item-name">{{ item.itemName }}</div>
+                        </div>
+                        <div class="item-qty">
+                            <span class="remaining-badge">{{ fmtNum(getRemaining(item.lineKey)) }}</span>
+                        </div>
+                    </div>
+                    <div v-if="poolItems.length===0" class="dd-empty-hint">
+                        &#10003; {{ t('oms.dd_all_allocated', '所有物料已分配') }}
+                    </div>
+                </div>
+                <div class="dd-col-footer">
+                    <span>{{ t('oms.dd_pool_title', '待分配') }}: {{ poolItems.length }} {{ t('oms.items_unit', '项') }}</span>
+                </div>
+            </div>
+
+            <!-- 柜列 -->
+            <div v-for="(c, gi) in containers" :key="'c-'+c.id" class="dd-column"
+                 :class="{ 'drag-over': dragOverTarget===c.id }"
+                 @dragover.prevent="dragOverTarget=c.id"
+                 @dragleave="onColLeave($event, c.id)"
+                 @drop.prevent="onDropToContainer(c.id)">
+                <div class="dd-col-header">
+                    <div class="dd-col-header-row">
+                        <span class="dd-col-title">DD#{{ gi+1 }}</span>
+                        <input v-model="c.containerNo" :placeholder="t('oms.dd_container_hint', '柜号')">
+                    </div>
+                    <div class="dd-col-actions">
+                        <button @click="fillRemaining(c.id)">{{ t('oms.dd_fill_btn', '填充剩余') }}</button>
+                        <button class="btn-danger" @click="removeContainer(c.id)">&#10005;</button>
+                    </div>
+                </div>
+                <div class="dd-col-body">
+                    <div v-for="item in getContainerItems(c.id)" :key="'ci-'+c.id+'-'+item.lineKey"
+                         class="dd-item-row" draggable="true"
+                         @dragstart="onDragStart($event, c.id, item.lineKey)"
+                         @dragend="onDragEnd()">
+                        <span class="drag-handle">&#x2807;</span>
+                        <div class="item-info">
+                            <div class="item-code">{{ item.itemCode }} <small v-if="item.sapDocNum">(SO#{{ item.sapDocNum }} L{{ item.lineNum }})</small></div>
+                            <div class="item-name">{{ item.itemName }}</div>
+                        </div>
+                        <div class="item-qty">
+                            <span class="planned">{{ fmtNum(item.totalQty) }}</span>
+                            <input type="number" :value="item.allocated[c.id]||0"
+                                   @input="updateQty(c.id, item.lineKey, $event.target.value)"
+                                   min="0" :max="getMaxAllowed(item.lineKey, c.id)" step="0.0001">
+                        </div>
+                    </div>
+                    <div v-if="getContainerItems(c.id).length===0" class="dd-empty-hint">
+                        {{ t('oms.dd_drop_hint', '拖拽物料到此柜') }}
+                    </div>
+                </div>
+                <div class="dd-col-footer">
+                    <span>{{ t('oms.line_count', '物料') }}: {{ getContainerItemCount(c.id) }}</span>
+                    <span>{{ t('oms.dd_total', '总量') }}: {{ fmtNum(getContainerTotalQty(c.id)) }}</span>
+                    <span v-if="hasCbmData">CBM: {{ fmtNum(getContainerCbm(c.id)) }}</span>
+                    <span v-if="hasWeightData">{{ t('oms.dd_gross_weight', '毛重') }}: {{ fmtNum(getContainerWeight(c.id)) }}kg</span>
+                </div>
+            </div>
+
+            <!-- 添加柜 -->
+            <div class="dd-column-add" @click="addContainer()">+ DD</div>
+        </div>
+
+        <!-- 底栏汇总 -->
+        <div class="dd-bottombar">
+            <div v-for="item in summaryItems" :key="'s-'+item.lineKey" class="dd-summary-item">
+                <span :class="item.statusClass">{{ item.statusIcon }}</span>
+                <span>{{ item.itemCode }}</span>
+                <span>{{ fmtNum(item.totalQty - getRemaining(item.lineKey)) }}/{{ fmtNum(item.totalQty) }}</span>
+            </div>
+            <div v-if="isAllAllocated" class="dd-all-ok">&#10003; {{ t('oms.dd_all_allocated', '所有物料已分配完成') }}</div>
+        </div>
+    </div>
+    </div>
+
+    <script defer src="vendor/JsBarcode.all.min.js"></script>
+    <script defer src="vendor/qrcode.min.js"></script>
+    <script src="env.js"></script>
+    <script src="shared.js?v=phase20.29"></script>
+    <script src="lang.js?v=phase20.29"></script>
+    <script src="vendor/vue.global.prod.js?v=phase20.29b"></script>
+    <script src="oms-kanban.js?v=phase0.9"></script>
+    <script src="oms-print.js?v=phase0.9"></script>
+    <script src="oms.js?v=phase0.9"></script>
+
+</body>
+</html>

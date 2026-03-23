@@ -1,0 +1,289 @@
+{
+  "name": "wf1b - PO查询(采购订单)",
+  "nodes": [
+    {
+      "id": "c0000001-0001-0001-0001-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        -600,
+        300
+      ],
+      "webhookId": "wms-po",
+      "parameters": {
+        "path": "wms/po",
+        "options": {},
+        "httpMethod": "GET",
+        "responseMode": "responseNode"
+      },
+      "typeVersion": 1.1
+    },
+    {
+      "id": "c0000001-0001-0001-0001-000000000002",
+      "name": "Extract Params",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -380,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const req = $input.item.json;\nlet docnum = '';\nif (req.query && req.query.docnum) {\n  docnum = req.query.docnum;\n} else {\n  const url = req.headers && req.headers['x-original-url'] ? req.headers['x-original-url'] : (req.url || '');\n  const parts = url.split('/');\n  const lastPart = parts[parts.length - 1];\n  docnum = lastPart ? lastPart.split('?')[0] : '';\n}\nif (!docnum || docnum === 'po' || docnum === 'undefined') {\n  return { json: { _error: true, success: false, message: '请提供采购订单号' } };\n}\n// SAP DocNum为INT类型，过滤非数字输入\nif (!/^\\d+$/.test(docnum)) {\n  return { json: { _error: true, success: false, message: '采购订单号必须为纯数字: ' + docnum } };\n}\n// 安全加固: 强制转为整数字符串，纵深防御\ndocnum = String(parseInt(docnum, 10));\nif (docnum === 'NaN') {\n  return { json: { _error: true, success: false, message: '单号解析失败' } };\n}\nreturn { json: { _error: false, docnum: docnum } };"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "c0000001-0001-0001-0001-000000000003",
+      "name": "Has Error?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        -160,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._error }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "c0000001-0001-0001-0001-000000000004",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [
+        60,
+        160
+      ],
+      "parameters": {
+        "options": {},
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: $json.message }) }}"
+      },
+      "typeVersion": 1.1
+    },
+    {
+      "id": "c0000001-0001-0001-0001-000000000005",
+      "name": "SAP查询",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        60,
+        440
+      ],
+      "parameters": {
+        "query": "SELECT set_config('app.company_code', $1, true);\nSELECT o.sap_doc_num AS \"DocNum\", o.sap_doc_entry AS \"DocEntry\",\n       o.business_partner AS \"CardCode\", o.bp_name AS \"CardName\",\n       o.sap_status AS \"DocStatus\", o.due_date AS \"DocDueDate\",\n       ol.line_num AS \"LineNum\", ol.item_code AS \"ItemCode\",\n       ol.item_name AS \"ItemName\", COALESCE(ol.uom, ic.uom, '') AS uom,\n       COALESCE(ic.man_batch_num, 'N') AS \"ManBtchNum\",\n       ol.quantity AS \"Quantity\",\n       COALESCE(ol.open_quantity, 0) AS \"OpenQty\",\n       CASE WHEN COALESCE(ol.open_quantity, 0) <= 0 THEN 'C' ELSE 'O' END AS \"LineStatus\",\n       ol.warehouse_code AS \"WhsCode\", '' AS \"WhsName\",\n       o.sync_status AS \"SyncStatus\"\nFROM oms.orders o\nJOIN oms.order_lines ol ON ol.order_id = o.id AND ol.company_code = o.company_code\nLEFT JOIN wms.wms_items_cache ic ON ic.company_code = o.company_code AND ic.item_code = ol.item_code\nWHERE o.company_code = $1\n  AND o.doc_type = 'PO'\n  AND o.sap_doc_num = $2\n  AND o.parent_id IS NULL\nORDER BY ol.line_num",
+        "options": {
+          "queryReplacement": "={{ [$env.DP_COMPANY_CODE, $('Extract Params').item.json.docnum] }}"
+        },
+        "operation": "executeQuery"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      },
+      "typeVersion": 2.5,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "c0000001-0001-0001-0001-000000000006",
+      "name": "PG WMS",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        60,
+        640
+      ],
+      "parameters": {
+        "query": "SELECT t.id, t.quantity, t.performed_by, t.remarks,\n       t.transaction_time, t.item_code, t.item_name,\n       dl.line_num, d.id AS document_id, d.wms_status AS doc_wms_status\nFROM wms.wms_documents d\nLEFT JOIN wms.wms_transactions t ON t.document_id = d.id\nLEFT JOIN wms.wms_document_lines dl ON t.line_id = dl.id\nWHERE d.company_code = $1\n  AND d.doc_type = 'PO'\n  AND d.doc_number = $2\nORDER BY t.transaction_time DESC",
+        "options": {
+          "queryReplacement": "={{ [$env.DP_COMPANY_CODE, $('Extract Params').item.json.docnum] }}"
+        },
+        "operation": "executeQuery"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      },
+      "typeVersion": 2.5,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "c0000001-0001-0001-0001-000000000007",
+      "name": "Merge Data",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        340,
+        540
+      ],
+      "parameters": {
+        "jsCode": "// 获取SAP结果 (try-catch保护: MS SQL凭证可能未配置)\nlet sapRows = [];\ntry {\n  sapRows = $('SAP查询').all().filter(r => !r.json.set_config);\n} catch(e) {\n  return { json: { success: false, message: 'SAP查询失败，请检查MS SQL凭证配置: ' + e.message } };\n}\n\nconst wmsRows = $('PG WMS').all();\n\nif (!sapRows || sapRows.length === 0 || !sapRows[0].json.DocNum) {\n  return { json: { success: false, error_type: 'not_found', message: '未找到该订单' } };\n}\n\nconst first = sapRows[0].json;\n// 去重: PG WMS 多行导致 SAP 查询重复执行，按 LineNum 去重\nconst lineMap = {};\nsapRows.forEach(r => { if (r.json.LineNum != null) lineMap[r.json.LineNum] = r; });\nconst dedupedRows = Object.values(lineMap);\nconst lines = dedupedRows.map(r => ({\n  lineNum: r.json.LineNum,\n  itemCode: r.json.ItemCode,\n  itemName: r.json.ItemName || '',\n  quantity: parseFloat(r.json.Quantity) || 0,\n  openQty: parseFloat(r.json.OpenQty) || 0,\n  lineStatus: r.json.LineStatus || 'O',\n  uom: r.json.uom || '',\n  whsCode: r.json.WhsCode || '',\n  manBtchNum: r.json.ManBtchNum || 'N'\n}));\n\nconst lineReceipts = {};\nconst transactions = [];\nlet docWmsStatus = 'pending';\nfor (const r of wmsRows) {\n  if (r.json.doc_wms_status) docWmsStatus = r.json.doc_wms_status;\n  if (r.json.id) {\n    const ln = r.json.line_num;\n    if (ln !== null && ln !== undefined) {\n      lineReceipts[ln] = (lineReceipts[ln] || 0) + parseFloat(r.json.quantity || 0);\n    }\n    transactions.push({\n      transaction_time: r.json.transaction_time,\n      item_code: r.json.item_code || '',\n      item_name: r.json.item_name || '',\n      quantity: parseFloat(r.json.quantity),\n      performed_by: r.json.performed_by,\n      remarks: r.json.remarks || ''\n    });\n  }\n}\n\nreturn { json: {\n  success: true,\n  sap_order: {\n    docNum: String(first.DocNum),\n    docEntry: first.DocEntry,\n    cardCode: first.CardCode || '',\n    cardName: first.CardName || '',\n    docDueDate: first.DocDueDate,\n    docStatus: first.DocStatus || 'O',\n    lines: lines\n  },\n  wms_history: {\n    wms_status: docWmsStatus,\n    lineReceipts: lineReceipts,\n    transactions: transactions\n  }\n}};"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "c0000001-0001-0001-0001-000000000008",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [
+        1000,
+        540
+      ],
+      "parameters": {
+        "options": {},
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Merge Data').item.json) }}"
+      },
+      "typeVersion": 1.1
+    },
+    {
+      "id": "c0000001-0001-0001-0001-000000000009",
+      "name": "Prepare Prefill",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        560,
+        540
+      ],
+      "parameters": {
+        "jsCode": "// V19.3: Prepare Prefill - SAP 全量行预填入 WMS\nconst data = $('Merge Data').item.json;\n\n// 查询失败或无行时跳过预填\nif (!data.success || !data.sap_order || !data.sap_order.lines || data.sap_order.lines.length === 0) {\n  return { json: { _prefillSql: 'SELECT 1' } };\n}\n\nconst order = data.sap_order;\nconst cc = $env.DP_COMPANY_CODE;\nconst user = ($('Webhook').item.json.query && $('Webhook').item.json.query.user) || 'SYSTEM';\n\nfunction esc(v) {\n  if (v === null || v === undefined) return 'NULL';\n  let s = String(v).substring(0, 500).replace(/\u0000/g, '');\n  return \"'\" + s.replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"''\") + \"'\";\n}\nfunction escDate(v) {\n  if (!v) return 'NULL';\n  const d = new Date(v);\n  return isNaN(d.getTime()) ? 'NULL' : \"'\" + d.toISOString().slice(0,10) + \"'\";\n}\n\nconst whsCode = order.lines[0].whsCode || '';\n\nconst lineVals = order.lines.map(l =>\n  '((SELECT id FROM doc), ' + l.lineNum + ', ' +\n  esc(l.itemCode) + ', ' + esc(l.itemName) + ', ' + esc(l.uom) + ', ' +\n  (parseFloat(l.openQty) || 0) + \", 0, \" + esc(l.whsCode) + \", 'pending', 'pending')\"\n).join(',\\n  ');\n\nconst sql = `WITH doc AS (\n  INSERT INTO wms.wms_documents\n    (company_code, doc_type, doc_number, sap_doc_num, sap_doc_entry,\n     status, wms_status, business_partner, bp_name,\n     warehouse_code, created_by, doc_date, due_date)\n  VALUES (${esc(cc)}, 'PO', ${esc(order.docNum)}, ${esc(order.docNum)}, ${order.docEntry || 0},\n     'draft', 'pending', ${esc(order.cardCode)}, ${esc(order.cardName)},\n     ${esc(whsCode)}, ${esc(user)}, CURRENT_DATE, ${escDate(order.docDueDate)})\n  ON CONFLICT (company_code, doc_type, doc_number) DO UPDATE SET\n    sap_doc_entry = EXCLUDED.sap_doc_entry,\n    created_by = CASE WHEN wms.wms_documents.created_by = 'SYSTEM' THEN EXCLUDED.created_by ELSE wms.wms_documents.created_by END,\n    business_partner = EXCLUDED.business_partner,\n    bp_name = EXCLUDED.bp_name,\n    due_date = EXCLUDED.due_date,\n    wms_status = wms.wms_documents.wms_status,\n    status = wms.wms_documents.status\n  RETURNING id\n)\nINSERT INTO wms.wms_document_lines\n  (document_id, line_num, item_code, item_name, uom,\n   planned_qty, actual_qty, warehouse_code, status, wms_status)\nVALUES\n  ${lineVals}\nON CONFLICT (document_id, line_num) DO UPDATE SET\n  item_name = EXCLUDED.item_name,\n  uom = EXCLUDED.uom,\n  planned_qty = EXCLUDED.planned_qty,\n  warehouse_code = EXCLUDED.warehouse_code;`;\n\nreturn { json: { _prefillSql: sql } };"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "c0000001-0001-0001-0001-000000000010",
+      "name": "Prefill WMS",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        780,
+        540
+      ],
+      "parameters": {
+        "query": "={{ $json._prefillSql }}",
+        "options": {},
+        "operation": "executeQuery"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_PG_ID__",
+          "name": "__CREDENTIAL_PG_NAME__"
+        }
+      },
+      "typeVersion": 2.5,
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "PG WMS": {
+      "main": [
+        [
+          {
+            "node": "SAP查询",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SAP查询": {
+      "main": [
+        [
+          {
+            "node": "Merge Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Error?": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "PG WMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Data": {
+      "main": [
+        [
+          {
+            "node": "Prepare Prefill",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prefill WMS": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Params": {
+      "main": [
+        [
+          {
+            "node": "Has Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Prefill": {
+      "main": [
+        [
+          {
+            "node": "Prefill WMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": true,
+  "tags": [
+    {
+      "name": "WMS"
+    }
+  ]
+}

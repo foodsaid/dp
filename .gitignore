@@ -1,0 +1,91 @@
+# =============================================================================
+# DP — Digital Platform .gitignore
+# =============================================================================
+
+# ======================== 环境与密钥 ========================
+.env
+.env.dev
+.env.uat
+.env.prod
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+*.p12
+
+# ======================== Docker 数据卷 ========================
+volumes/
+data/
+
+# ======================== 运行时生成文件 ========================
+# env.js 由 Docker 容器启动时生成，不提交
+apps/wms/env.js
+
+# ======================== Node.js (n8n) ========================
+node_modules/
+coverage/
+npm-debug.log*
+yarn-error.log*
+
+# ======================== Playwright E2E ========================
+test-results/
+playwright-report/
+blob-report/
+
+# ======================== Python ========================
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+_gh-pages/
+.eggs/
+*.egg
+venv/
+.venv/
+
+# ======================== IDE ========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ======================== 日志 ========================
+*.log
+logs/
+
+# ======================== 备份 ========================
+*.sql.gz
+*.dump
+backups/
+
+# ======================== Claude Code 本地配置 ========================
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/.claude_backup/
+
+# ======================== SSO 用户数据 (含密码哈希，不提交) ========================
+infrastructure/sso/users.yml
+
+# ======================== Certbot / DNS 凭据 ========================
+infrastructure/certbot/cloudflare.ini
+infrastructure/dns/dnsmasq.conf
+
+# ======================== 内部文档 (含客户数据，不提交) ========================
+docs/internal/
+
+# ======================== 旧 n8n 工作流 (仅本地运行) ========================
+apps/wf/legacy/
+
+# ======================== 临时文件 ========================
+tmp/
+temp/
+*.tmp
+.msys*
+infrastructure/nginx/certs/
